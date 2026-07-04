@@ -60,4 +60,17 @@ class DiseaseDataTest {
 
         assertEquals(listOf("Melon Thrips"), matches.map { it.name })
     }
+
+    @Test
+    fun `filter uses the catalog supplied by the database layer`() {
+        val localizedCatalog = DiseaseData.forLanguage("fil")
+
+        val matches = DiseaseData.filter(
+            diseases = localizedCatalog,
+            query = "Puting Amag",
+            type = DiseaseType.LEAF_DISEASE,
+        )
+
+        assertEquals(listOf("white-molds"), matches.map { it.id })
+    }
 }

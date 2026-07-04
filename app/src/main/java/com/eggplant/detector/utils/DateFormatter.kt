@@ -2,12 +2,15 @@ package com.eggplant.detector.utils
 
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 
 object DateFormatter {
-    private val dateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy • h:mm a")
     private val monthFormatter = DateTimeFormatter.ofPattern("MMMM yyyy")
 
-    fun format(value: LocalDateTime): String = value.format(dateTimeFormatter)
+    fun format(value: LocalDateTime): String = value.format(
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(Locale.getDefault()),
+    )
 
     fun groupLabel(value: LocalDateTime, now: LocalDateTime = LocalDateTime.now()): String = when {
         value.toLocalDate() == now.toLocalDate() -> "Today"

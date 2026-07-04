@@ -3,6 +3,7 @@ package com.eggplant.detector.ui.history
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,61 +22,70 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.eggplant.detector.AppViewModel
+import com.eggplant.detector.R
 import com.eggplant.detector.components.DiseaseArtwork
 import com.eggplant.detector.components.FilterChips
 import com.eggplant.detector.components.HistoryCard
 import com.eggplant.detector.components.SearchBar
 import com.eggplant.detector.model.ScanCategory
 import com.eggplant.detector.model.ScanResult
-import com.eggplant.detector.utils.DateFormatter
-import java.time.LocalDateTime
 
 @Composable
 fun HistoryPage(viewModel: AppViewModel, onResultClick: (ScanResult) -> Unit) {
     val history by viewModel.history.collectAsState()
+    val allLabel = stringResource(R.string.all)
+    val leafLabel = stringResource(R.string.leaf_disease)
+    val fruitLabel = stringResource(R.string.fruit_disease)
+    val healthyLabel = localized("Healthy", "Malusog")
     var query by rememberSaveable { mutableStateOf("") }
-    var selectedFilter by rememberSaveable { mutableStateOf("All") }
-    val now = LocalDateTime.now()
+    var selectedFilter by rememberSaveable(allLabel) { mutableStateOf(allLabel) }
     val category = when (selectedFilter) {
-        "Leaf Disease" -> ScanCategory.LEAF_DISEASE
-        "Fruit Disease" -> ScanCategory.FRUIT_DISEASE
-        "Healthy" -> ScanCategory.NO_DISEASE_DETECTED
+        leafLabel -> ScanCategory.LEAF_DISEASE
+        fruitLabel -> ScanCategory.FRUIT_DISEASE
+        healthyLabel -> ScanCategory.NO_DISEASE_DETECTED
         else -> null
     }
-    val filtered = history.filter { result ->
+    fun filtered(results: List<ScanResult>) = results.filter { result ->
         (category == null || result.category == category) &&
             (query.isBlank() || result.name.contains(query.trim(), ignoreCase = true))
     }
-    val grouped = filtered.groupBy { DateFormatter.groupLabel(it.scannedAt, now) }
+    val userResults = filtered(history)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+        contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Outlined.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("History", style = MaterialTheme.typography.headlineMedium)
+                Text(stringResource(R.string.history_title), style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    "Review your previous eggplant scans",
+                    stringResource(R.string.history_subtitle),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        item { SearchBar(query, { query = it }, "Search scan history...") }
+        item { SearchBar(query, { query = it }, stringResource(R.string.history_search)) }
         item {
             FilterChips(
-                options = listOf("All", "Leaf Disease", "Fruit Disease", "Healthy"),
+                options = listOf(allLabel, leafLabel, fruitLabel, healthyLabel),
                 selected = selectedFilter,
                 onSelected = { selectedFilter = it },
             )
         }
-        if (filtered.isEmpty()) {
+        if (userResults.isNotEmpty()) {
+            item { SectionLabel(stringResource(R.string.your_scans)) }
+            items(userResults, key = { "user-${it.id}" }) { result ->
+                HistoryCard(result = result, onClick = { onResultClick(result) })
+            }
+        }
+        if (userResults.isEmpty()) {
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 70.dp),
@@ -83,33 +93,24 @@ fun HistoryPage(viewModel: AppViewModel, onResultClick: (ScanResult) -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     DiseaseArtwork("empty-history", Modifier.fillMaxWidth(.48f))
-                    Text("No scan history found", style = MaterialTheme.typography.titleLarge)
-                }
-            }
-        } else {
-            listOf("Today", "Yesterday", "June 2026").forEach { label ->
-                val results = grouped[label].orEmpty()
-                if (results.isNotEmpty()) {
-                    item(key = "header-$label") {
-                        Text(
-                            label,
-                            modifier = Modifier.padding(top = 12.dp),
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        )
-                    }
-                    items(results, key = { it.id }) { result ->
-                        HistoryCard(result = result, onClick = { onResultClick(result) })
-                    }
-                }
-            }
-            grouped.filterKeys { it !in setOf("Today", "Yesterday", "June 2026") }.forEach { (label, results) ->
-                item(key = "header-$label") {
-                    Text(label, modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleLarge)
-                }
-                items(results, key = { it.id }) { result ->
-                    HistoryCard(result = result, onClick = { onResultClick(result) })
+                    Text(stringResource(R.string.no_history), style = MaterialTheme.typography.titleLarge)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SectionLabel(label: String) {
+    Text(
+        label,
+        modifier = Modifier.padding(top = 10.dp),
+        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+    )
+}
+
+@Composable
+private fun localized(english: String, filipino: String): String {
+    val language = androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language
+    return if (language == "fil" || language == "tl") filipino else english
 }

@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
@@ -19,6 +18,7 @@ import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -34,22 +34,46 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.eggplant.detector.AppViewModel
 import com.eggplant.detector.BuildConfig
+import com.eggplant.detector.LanguagePreference
+import com.eggplant.detector.R
 import com.eggplant.detector.ThemePreference
 import com.eggplant.detector.UnitPreference
 import com.eggplant.detector.components.SettingsRow
 
-private data class InfoDialog(val title: String, val body: String)
-
 @Composable
-fun SettingsPage(viewModel: AppViewModel) {
+fun SettingsPage(
+    viewModel: AppViewModel,
+    onModelStatus: () -> Unit,
+    onScanTips: () -> Unit,
+    onPrivacy: () -> Unit,
+    onHelp: () -> Unit,
+    onAbout: () -> Unit,
+) {
     val theme by viewModel.themePreference.collectAsState()
     val units by viewModel.unitPreference.collectAsState()
-    var infoDialog by remember { mutableStateOf<InfoDialog?>(null) }
+    val language by viewModel.languagePreference.collectAsState()
+    val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
+    var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showUnitsDialog by remember { mutableStateOf(false) }
+    val languageOptions = listOf(
+        LanguagePreference.ENGLISH to stringResource(R.string.english),
+        LanguagePreference.FILIPINO to stringResource(R.string.filipino),
+    )
+    val themeOptions = listOf(
+        ThemePreference.LIGHT to stringResource(R.string.light),
+        ThemePreference.DARK to stringResource(R.string.dark),
+        ThemePreference.SYSTEM to stringResource(R.string.system_default),
+    )
+    val unitOptions = listOf(
+        UnitPreference.SYSTEM to stringResource(R.string.system_default),
+        UnitPreference.METRIC to stringResource(R.string.metric_examples),
+        UnitPreference.IMPERIAL to stringResource(R.string.imperial_examples),
+    )
 
     Column(
         modifier = Modifier
@@ -65,9 +89,9 @@ fun SettingsPage(viewModel: AppViewModel) {
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
             )
-            Text("Settings", style = MaterialTheme.typography.headlineMedium)
+            Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Personalize your local app experience",
+                stringResource(R.string.settings_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -77,57 +101,59 @@ fun SettingsPage(viewModel: AppViewModel) {
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
-            SettingsRow("Language", Icons.Outlined.Language, "English") {
-                infoDialog = InfoDialog("Language", "English is the only language included in this UI milestone.")
-            }
+            SettingsRow(stringResource(R.string.language), Icons.Outlined.Language, languageLabel(language)) { showLanguageDialog = true }
             HorizontalDivider()
-            SettingsRow("Theme", Icons.Outlined.DarkMode, theme.displayName) { showThemeDialog = true }
+            SettingsRow(stringResource(R.string.theme), Icons.Outlined.DarkMode, themeLabel(theme)) { showThemeDialog = true }
             HorizontalDivider()
-            SettingsRow("Units", Icons.Outlined.Straighten, units.displayName) { showUnitsDialog = true }
+            SettingsRow(stringResource(R.string.units), Icons.Outlined.Straighten, unitLabel(units)) { showUnitsDialog = true }
+            HorizontalDivider()
+            SettingsRow(
+                stringResource(R.string.history_saving),
+                Icons.Outlined.Save,
+                stringResource(if (autoSaveEnabled) R.string.automatic_save else R.string.manual_save),
+            ) { viewModel.setAutoSave(!autoSaveEnabled) }
         }
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
-            SettingsRow("Offline Model Status", Icons.Outlined.Memory, "Mock mode") {
-                infoDialog = InfoDialog("Offline Model Status", "YOLO 26 Medium is not installed. Deterministic mock detection is active.")
-            }
+            SettingsRow(stringResource(R.string.detection_status), Icons.Outlined.Memory, stringResource(R.string.model_pending), onModelStatus)
             HorizontalDivider()
-            SettingsRow("Scan Quality Tips", Icons.Outlined.PhotoCamera) {
-                infoDialog = InfoDialog("Scan Quality Tips", "Use one clear leaf, even lighting, a steady angle, and a simple background.")
-            }
+            SettingsRow(stringResource(R.string.scan_quality_tips), Icons.Outlined.PhotoCamera, onClick = onScanTips)
             HorizontalDivider()
-            SettingsRow("Data & Privacy", Icons.Outlined.PrivacyTip) {
-                infoDialog = InfoDialog("Data & Privacy", "No photos or history leave this device. This build uses memory only and sends no network requests.")
-            }
+            SettingsRow(stringResource(R.string.data_privacy), Icons.Outlined.PrivacyTip, onClick = onPrivacy)
             HorizontalDivider()
-            SettingsRow("Export History", Icons.Outlined.Download) {
-                infoDialog = InfoDialog("Export History", "Export is unavailable in this mock build. No file, cloud, email, or share action was performed.")
-            }
+            SettingsRow(stringResource(R.string.help_faq), Icons.AutoMirrored.Outlined.HelpOutline, onClick = onHelp)
             HorizontalDivider()
-            SettingsRow("Help & FAQ", Icons.AutoMirrored.Outlined.HelpOutline) {
-                infoDialog = InfoDialog("Help & FAQ", "This app demonstrates the UI for eggplant problem detection. Capture and gallery actions return fixed mock results.")
-            }
-            HorizontalDivider()
-            SettingsRow("About App", Icons.Outlined.Info) {
-                infoDialog = InfoDialog("About App", "Eggplant Disease Detector is a Kotlin/Compose thesis UI prototype prepared for future on-device model integration.")
-            }
+            SettingsRow(stringResource(R.string.about_app), Icons.Outlined.Info, onClick = onAbout)
         }
         Text(
-            "App version ${BuildConfig.VERSION_NAME}",
+            stringResource(R.string.app_version, BuildConfig.VERSION_NAME),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
     }
 
+    if (showLanguageDialog) {
+        ChoiceDialog(
+            title = stringResource(R.string.language),
+            options = languageOptions,
+            selected = language,
+            onSelect = { choice ->
+                viewModel.setLanguage(choice)
+                showLanguageDialog = false
+            },
+            onDismiss = { showLanguageDialog = false },
+        )
+    }
     if (showThemeDialog) {
         ChoiceDialog(
-            title = "Theme",
-            options = ThemePreference.entries.map { it.displayName },
-            selected = theme.displayName,
+            title = stringResource(R.string.theme),
+            options = themeOptions,
+            selected = theme,
             onSelect = { choice ->
-                viewModel.setTheme(ThemePreference.entries.first { it.displayName == choice })
+                viewModel.setTheme(choice)
                 showThemeDialog = false
             },
             onDismiss = { showThemeDialog = false },
@@ -135,32 +161,24 @@ fun SettingsPage(viewModel: AppViewModel) {
     }
     if (showUnitsDialog) {
         ChoiceDialog(
-            title = "Units",
-            options = UnitPreference.entries.map { it.displayName },
-            selected = units.displayName,
+            title = stringResource(R.string.units),
+            options = unitOptions,
+            selected = units,
             onSelect = { choice ->
-                viewModel.setUnits(UnitPreference.entries.first { it.displayName == choice })
+                viewModel.setUnits(choice)
                 showUnitsDialog = false
             },
             onDismiss = { showUnitsDialog = false },
         )
     }
-    infoDialog?.let { dialog ->
-        AlertDialog(
-            onDismissRequest = { infoDialog = null },
-            title = { Text(dialog.title) },
-            text = { Text(dialog.body) },
-            confirmButton = { TextButton(onClick = { infoDialog = null }) { Text("Close") } },
-        )
-    }
 }
 
 @Composable
-private fun ChoiceDialog(
+private fun <T> ChoiceDialog(
     title: String,
-    options: List<String>,
-    selected: String,
-    onSelect: (String) -> Unit,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -168,13 +186,33 @@ private fun ChoiceDialog(
         title = { Text(title) },
         text = {
             Column {
-                options.forEach { option ->
-                    TextButton(onClick = { onSelect(option) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (option == selected) "✓  $option" else option)
+                options.forEach { (value, label) ->
+                    TextButton(onClick = { onSelect(value) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (value == selected) "✓  $label" else label)
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+}
+
+@Composable
+private fun languageLabel(preference: LanguagePreference): String = when (preference) {
+    LanguagePreference.ENGLISH -> stringResource(R.string.english)
+    LanguagePreference.FILIPINO -> stringResource(R.string.filipino)
+}
+
+@Composable
+private fun themeLabel(preference: ThemePreference): String = when (preference) {
+    ThemePreference.LIGHT -> stringResource(R.string.light)
+    ThemePreference.DARK -> stringResource(R.string.dark)
+    ThemePreference.SYSTEM -> stringResource(R.string.system_default)
+}
+
+@Composable
+private fun unitLabel(preference: UnitPreference): String = when (preference) {
+    UnitPreference.SYSTEM -> stringResource(R.string.system_default)
+    UnitPreference.METRIC -> stringResource(R.string.metric)
+    UnitPreference.IMPERIAL -> stringResource(R.string.imperial)
 }

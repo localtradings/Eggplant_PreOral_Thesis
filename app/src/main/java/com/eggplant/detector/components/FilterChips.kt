@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Spa
 import androidx.compose.material3.FilterChip
@@ -27,16 +30,16 @@ fun FilterChips(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         options.forEach { option ->
             FilterChip(
-                modifier = Modifier.weight(if (option == "All") .72f else 1.15f).height(34.dp),
+                modifier = Modifier.height(40.dp),
                 selected = option == selected,
                 onClick = { onSelected(option) },
                 label = {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Box(Modifier.padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
                         Text(option, fontSize = 10.sp, maxLines = 1)
                     }
                 },

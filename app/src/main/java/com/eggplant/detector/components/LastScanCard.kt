@@ -39,7 +39,7 @@ fun LastScanCard(result: ScanResult, onClick: () -> Unit, modifier: Modifier = M
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ResultArtwork(result.category, result.name, Modifier.size(width = 88.dp, height = 72.dp))
+            ResultArtwork(result.category, result.name, Modifier.size(width = 88.dp, height = 72.dp), result.diseaseId)
             Spacer(Modifier.width(14.dp))
             Column(
                 modifier = Modifier.weight(1f),

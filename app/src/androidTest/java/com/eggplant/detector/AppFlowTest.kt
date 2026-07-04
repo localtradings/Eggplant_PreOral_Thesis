@@ -10,6 +10,19 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.test.platform.app.InstrumentationRegistry
+import com.eggplant.detector.camera.CameraScene
+import com.eggplant.detector.detection.DetectionBox
+import com.eggplant.detector.detection.DetectionFrame
+import com.eggplant.detector.detection.DetectionStatus
+import com.eggplant.detector.detection.InputSource
+import com.eggplant.detector.detection.ModelMetadata
+import com.eggplant.detector.detection.NormalizedBox
+import com.eggplant.detector.detection.RgbFrame
+import com.eggplant.detector.detection.StabilityResult
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -48,22 +61,12 @@ class AppFlowTest {
     }
 
     @Test
-    fun cameraResultSaveHistoryDetailFlowShowsConfidenceOnlyOnAllowedScreens() {
-        composeRule.onNodeWithContentDescription("Open mock camera").performClick()
-        composeRule.onNodeWithText("Place one clear eggplant leaf inside the frame")
-            .assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Capture mock scan").performClick()
-
-        composeRule.onNodeWithText("Scan Result").assertIsDisplayed()
-        composeRule.onNodeWithText("87%").assertIsDisplayed()
-        composeRule.onNodeWithText("Save to History").performScrollTo().performClick()
-        composeRule.waitForIdle()
-
-        composeRule.onNodeWithText("Review your previous eggplant scans").assertIsDisplayed()
-        composeRule.onAllNodesWithContentDescription("Open Leaf Spot history details")[0].performClick()
-        composeRule.onNodeWithText("History Detail").assertIsDisplayed()
-        composeRule.onNodeWithText("87%").assertIsDisplayed()
-        composeRule.onAllNodesWithText("Risk", substring = true).assertCountEquals(0)
+    fun cameraRouteShowsLiveControlsWithoutTemporaryResults() {
+        grantCameraPermission()
+        composeRule.onNodeWithContentDescription("Open camera").performClick()
+        composeRule.onNodeWithContentDescription("Capture scan").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Choose from gallery").assertIsDisplayed()
+        composeRule.onAllNodesWithText("temporary", substring = true).assertCountEquals(0)
     }
 
     @Test
@@ -71,8 +74,150 @@ class AppFlowTest {
         composeRule.onNodeWithContentDescription("Navigate to Settings").performClick()
 
         composeRule.onNodeWithText("Personalize your local app experience").assertIsDisplayed()
-        composeRule.onNodeWithText("Offline Model Status").assertIsDisplayed()
-        composeRule.onNodeWithText("Export History").assertIsDisplayed()
+        composeRule.onNodeWithText("Detection Status").assertIsDisplayed()
+        composeRule.onNodeWithText("Filipino (Tagalog)").assertDoesNotExist()
+        composeRule.onNodeWithText("Export History").assertDoesNotExist()
         composeRule.onNodeWithText("Confidence", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun homeActionsOpenTheirDestinations() {
+        composeRule.onNodeWithContentDescription("Open notifications").performClick()
+        composeRule.onNodeWithText("Notifications").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("View All", substring = true).performClick()
+        composeRule.onNodeWithText("Review your previous eggplant scans").assertIsDisplayed()
+    }
+
+    @Test
+    fun reselectingHomeScrollsToTheTop() {
+        composeRule.onNodeWithContentDescription("Home content").performScrollToIndex(4)
+        composeRule.onNodeWithContentDescription("Navigate to Home").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Eggplant").assertIsDisplayed()
+    }
+
+    @Test
+    fun libraryFilterButtonOpensFilterSheet() {
+        composeRule.onNodeWithContentDescription("Navigate to Library").performClick()
+        composeRule.onNodeWithContentDescription("Filter diseases").performClick()
+        composeRule.onNodeWithText("Filter diseases").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Fruit Disease")[2].performClick()
+        composeRule.onNodeWithText("Fruit Rot").assertIsDisplayed()
+    }
+
+    @Test
+    fun languageSwitchesTheWholeAppAndSurvivesRecreation() {
+        composeRule.onNodeWithContentDescription("Navigate to Settings").performClick()
+        composeRule.onNodeWithText("Language").performClick()
+        composeRule.onNodeWithText("Filipino (Tagalog)").performClick()
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithText("Mga Setting").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Aklatan").assertIsDisplayed()
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithText("Mga Setting").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        composeRule.onNodeWithText("Wika").performClick()
+        composeRule.onNodeWithText("English").performClick()
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithText("Settings").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    fun historyStartsWithoutFabricatedSampleScans() {
+        composeRule.onNodeWithContentDescription("Navigate to History").performClick()
+        composeRule.onNodeWithText("Sample scans").assertDoesNotExist()
+    }
+
+    @Test
+    fun supportActionsOpenCompletePages() {
+        composeRule.onNodeWithText("Care Guide").performClick()
+        composeRule.onNodeWithText("Clean the lens").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Offline Use").performClick()
+        composeRule.onNodeWithText("What works offline").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("Navigate to Library").performClick()
+        composeRule.onNodeWithContentDescription("Open help and FAQ").performClick()
+        composeRule.onNodeWithText("Does the app need Internet?").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("Navigate to Settings").performClick()
+        composeRule.onNodeWithText("Data & Privacy").performScrollTo().performClick()
+        composeRule.onNodeWithText("Local history").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("About App").performScrollTo().performClick()
+        composeRule.onNodeWithText("Technology").assertIsDisplayed()
+    }
+
+    @Test
+    fun groupedDetectionCanBeSavedAndReopenedWithoutMockProvider() {
+        val viewModel = AppViewModel(initialHistory = emptyList())
+        val detection = DetectionBox(
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(5)!!,
+            .87f,
+            NormalizedBox(.1f, .1f, .8f, .8f),
+        )
+        val rgb = RgbFrame(2, 2, ByteArray(12), 1, InputSource.CAPTURE, 1)
+        val scene = CameraScene(
+            rgb,
+            DetectionFrame(listOf(detection), 1, 1, InputSource.CAPTURE, 1),
+            StabilityResult(DetectionStatus.DISEASE_DETECTED, listOf(detection), listOf(detection), true),
+        )
+
+        viewModel.openDetectionScene(scene, detection)
+        assertTrue(viewModel.saveCurrentResult())
+        assertEquals(1, viewModel.history.value.size)
+
+        viewModel.openHistoryResult(viewModel.history.value.single())
+        assertEquals("leaf-spot", viewModel.currentResult.value?.diseaseId)
+    }
+
+    @Test
+    fun failedDatabaseSaveIsReportedAndDoesNotCreateHistory() {
+        val viewModel = AppViewModel(
+            initialHistory = emptyList(),
+            scanSaver = { error("Test database failure") },
+        )
+        var completed: Boolean? = null
+        val detection = DetectionBox(
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(5)!!,
+            .87f,
+            NormalizedBox(.1f, .1f, .8f, .8f),
+        )
+        val rgb = RgbFrame(2, 2, ByteArray(12), 1, InputSource.CAPTURE, 1)
+        val scene = CameraScene(
+            rgb,
+            DetectionFrame(listOf(detection), 1, 1, InputSource.CAPTURE, 1),
+            StabilityResult(DetectionStatus.DISEASE_DETECTED, listOf(detection), listOf(detection), true),
+        )
+
+        viewModel.openDetectionScene(scene, detection)
+        viewModel.saveCurrentResult { success -> completed = success }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+        composeRule.waitUntil(5_000) { completed != null }
+        assertFalse(completed ?: true)
+        assertEquals(SaveState.FAILED, viewModel.saveState.value)
+        assertEquals(emptyList<com.eggplant.detector.model.ScanResult>(), viewModel.history.value)
+    }
+
+    private fun grantCameraPermission() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("pm grant com.eggplant.detector android.permission.CAMERA")
+            .close()
     }
 }

@@ -30,15 +30,18 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
+import com.eggplant.detector.R
 import com.eggplant.detector.model.Disease
 
 @Composable
 fun DiseaseCard(disease: Disease, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val description = stringResource(R.string.open_disease_details, disease.name)
     Card(
         modifier = modifier
             .fillMaxWidth()
             .height(70.dp)
-            .semantics { contentDescription = "Open ${disease.name} details" }
+            .semantics { contentDescription = description }
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -86,7 +89,7 @@ fun DiseaseCard(disease: Disease, onClick: () -> Unit, modifier: Modifier = Modi
                         else com.eggplant.detector.theme.EggplantPurple
                         Icon(Icons.Outlined.Spa, null, tint = tagColor, modifier = Modifier.size(10.dp))
                         Text(
-                            disease.type.displayName,
+                            stringResource(if (disease.type.name.startsWith("LEAF")) R.string.leaf_disease else R.string.fruit_disease),
                             color = tagColor,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontWeight = FontWeight.SemiBold,
