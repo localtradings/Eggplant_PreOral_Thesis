@@ -8,7 +8,7 @@ set_target_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libncnn.so"
 )
 
-add_library(eggplant_detector SHARED eggplant_detector_jni.cpp)
+add_library(eggplant_detector SHARED detection/eggplant_ncnn_bridge.cpp)
 target_compile_features(eggplant_detector PRIVATE cxx_std_17)
 target_compile_options(eggplant_detector PRIVATE -Wall -Wextra -Werror)
 target_include_directories(
