@@ -27,13 +27,16 @@ import androidx.compose.ui.unit.dp
 import com.eggplant.detector.model.ScanResult
 import com.eggplant.detector.utils.ConfidenceFormatter
 import com.eggplant.detector.utils.DateFormatter
+import androidx.compose.ui.res.stringResource
+import com.eggplant.detector.R
 
 @Composable
 fun HistoryCard(result: ScanResult, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val description = stringResource(R.string.open_history_details, result.name)
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .semantics { contentDescription = "Open ${result.name} history details" }
+            .semantics { contentDescription = description }
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -47,17 +50,22 @@ fun HistoryCard(result: ScanResult, onClick: () -> Unit, modifier: Modifier = Mo
                 category = result.category,
                 name = result.name,
                 modifier = Modifier.size(width = 92.dp, height = 78.dp),
+                diseaseId = result.diseaseId,
             )
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(result.name, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    result.category.displayName,
+                    when (result.category) {
+                        com.eggplant.detector.model.ScanCategory.LEAF_DISEASE -> stringResource(R.string.leaf_disease)
+                        com.eggplant.detector.model.ScanCategory.FRUIT_DISEASE -> stringResource(R.string.fruit_disease)
+                        com.eggplant.detector.model.ScanCategory.NO_DISEASE_DETECTED -> localized("Healthy", "Malusog")
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.secondary,
                 )
                 Text(
-                    "${ConfidenceFormatter.format(result.confidence)} confidence",
+                    stringResource(R.string.confidence_value, ConfidenceFormatter.format(result.confidence)),
                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -70,4 +78,10 @@ fun HistoryCard(result: ScanResult, onClick: () -> Unit, modifier: Modifier = Mo
             Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null)
         }
     }
+}
+
+@Composable
+private fun localized(english: String, filipino: String): String {
+    val language = androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language
+    return if (language == "fil" || language == "tl") filipino else english
 }

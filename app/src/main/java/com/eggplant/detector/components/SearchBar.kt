@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.stringResource
+import com.eggplant.detector.R
 
 @Composable
 fun SearchBar(
@@ -31,8 +36,11 @@ fun SearchBar(
     onValueChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
+    onFilterClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(16.dp)
+    val searchDescription = stringResource(R.string.search)
+    val filterDescription = stringResource(R.string.filter_diseases)
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -44,7 +52,7 @@ fun SearchBar(
     ) {
         Icon(
             Icons.Outlined.Search,
-            contentDescription = "Search",
+            contentDescription = searchDescription,
             modifier = Modifier.size(19.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -52,7 +60,7 @@ fun SearchBar(
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).semantics { contentDescription = placeholder },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyLarge.copy(
                 color = MaterialTheme.colorScheme.onSurface,
@@ -74,12 +82,16 @@ fun SearchBar(
                 }
             },
         )
-        Spacer(Modifier.width(8.dp))
-        Icon(
-            Icons.Outlined.Tune,
-            contentDescription = "Filter options display only",
-            modifier = Modifier.size(19.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        onFilterClick?.let { onClick ->
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Outlined.Tune,
+                    contentDescription = filterDescription,
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }

@@ -61,7 +61,7 @@ fun QuickActionCard(
                 fontWeight = FontWeight.Bold,
             ),
             textAlign = TextAlign.Center,
-            maxLines = 1,
+            maxLines = 2,
         )
         Text(
             subtitle,

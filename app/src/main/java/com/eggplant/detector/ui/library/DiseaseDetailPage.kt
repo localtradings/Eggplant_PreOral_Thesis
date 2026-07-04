@@ -27,12 +27,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.eggplant.detector.components.DiseaseArtwork
 import com.eggplant.detector.model.Disease
+import androidx.compose.ui.res.stringResource
+import com.eggplant.detector.R
 
 @Composable
 fun DiseaseDetailPage(disease: Disease?, onBack: () -> Unit) {
     if (disease == null) {
-        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Disease not found")
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Text(stringResource(R.string.disease_not_found))
+            androidx.compose.material3.TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
         }
         return
     }
@@ -46,9 +49,9 @@ fun DiseaseDetailPage(disease: Disease?, onBack: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
             }
-            Text("Disease Detail", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.disease_detail), style = MaterialTheme.typography.titleLarge)
         }
         DiseaseArtwork(disease.id, Modifier.fillMaxWidth().height(240.dp))
         Text(disease.name, style = MaterialTheme.typography.headlineMedium)
@@ -57,18 +60,18 @@ fun DiseaseDetailPage(disease: Disease?, onBack: () -> Unit) {
             color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
             Text(
-                disease.type.displayName,
+                stringResource(if (disease.type.name.startsWith("LEAF")) R.string.leaf_disease else R.string.fruit_disease),
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        DetailSection("About ${disease.name}", disease.symptomPreview)
-        DetailSection("Common signs", disease.signs.joinToString("\n") { "• $it" })
-        DetailSection("Mock treatment guidance", disease.treatment)
-        DetailSection("Prevention", disease.prevention)
+        DetailSection(stringResource(R.string.about_disease, disease.name), disease.symptomPreview)
+        DetailSection(stringResource(R.string.common_signs), disease.signs.joinToString("\n") { "• $it" })
+        DetailSection(stringResource(R.string.recommended_action), disease.treatment)
+        DetailSection(stringResource(R.string.prevention), disease.prevention)
         Text(
-            "Educational mock content only. Confirm crop concerns with a qualified local agricultural specialist.",
+            stringResource(R.string.educational_notice),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

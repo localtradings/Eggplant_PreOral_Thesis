@@ -46,8 +46,8 @@ fun DiseaseArtwork(
 }
 
 @Composable
-fun ResultArtwork(category: ScanCategory, name: String, modifier: Modifier = Modifier) {
-    val key = when (name.lowercase()) {
+fun ResultArtwork(category: ScanCategory, name: String, modifier: Modifier = Modifier, diseaseId: String? = null) {
+    val key = diseaseId?.takeUnless { it == "unknown" || it == "healthy" } ?: when (name.lowercase()) {
         "leaf spot", "early blight" -> "leaf-spot"
         "mosaic virus" -> "mosaic-virus"
         "white molds" -> "white-molds"
@@ -74,14 +74,17 @@ private fun diseaseDrawable(artworkKey: String): Int? = when (artworkKey) {
     else -> null
 }
 
-private fun diseaseDescription(artworkKey: String): String? = when (artworkKey) {
-    "leaf-spot" -> "Leaf Spot disease photo"
-    "mosaic-virus" -> "Mosaic Virus disease photo"
-    "white-molds" -> "White Molds disease photo"
-    "wilt" -> "Wilt disease photo"
-    "insect-pest" -> "Insect Pest disease photo"
-    "melon-thrips" -> "Melon Thrips disease photo"
-    "fruit-rot" -> "Fruit Rot disease photo"
-    "fruit-borer" -> "Fruit Borer disease photo"
+private fun diseaseDescription(artworkKey: String): String? {
+    val filipino = java.util.Locale.getDefault().language in setOf("fil", "tl")
+    return when (artworkKey) {
+    "leaf-spot" -> if (filipino) "Larawan ng Leaf Spot" else "Leaf Spot disease photo"
+    "mosaic-virus" -> if (filipino) "Larawan ng Mosaic Virus" else "Mosaic Virus disease photo"
+    "white-molds" -> if (filipino) "Larawan ng puting amag" else "White Molds disease photo"
+    "wilt" -> if (filipino) "Larawan ng pagkalanta" else "Wilt disease photo"
+    "insect-pest" -> if (filipino) "Larawan ng pesteng insekto" else "Insect Pest disease photo"
+    "melon-thrips" -> if (filipino) "Larawan ng Melon Thrips" else "Melon Thrips disease photo"
+    "fruit-rot" -> if (filipino) "Larawan ng pagkabulok ng bunga" else "Fruit Rot disease photo"
+    "fruit-borer" -> if (filipino) "Larawan ng Fruit Borer" else "Fruit Borer disease photo"
     else -> null
+    }
 }

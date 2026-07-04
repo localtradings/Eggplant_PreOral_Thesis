@@ -12,6 +12,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.eggplant.detector.utils.ConfidenceFormatter
+import androidx.compose.ui.res.stringResource
+import com.eggplant.detector.R
 
 @Composable
 fun ConfidenceDisplay(confidence: Int, modifier: Modifier = Modifier) {
@@ -32,6 +34,6 @@ fun ConfidenceDisplay(confidence: Int, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.titleLarge,
             )
         }
-        Text("Confidence", style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(R.string.confidence_label), style = MaterialTheme.typography.bodyMedium)
     }
 }
