@@ -125,5 +125,6 @@
     <string name="allow_camera">Allow camera</string>
     <string name="gallery_open_failed">Could not open the selected image.</string>
     <string name="capture_failed">Could not capture a photo.</string>
+    <string name="no_supported_disease_found">No supported eggplant disease was detected in this image. Try a closer, well-lit photo.</string>
     <string name="detection_box_description">%1$s, confidence %2$d%%</string>
 </resources>

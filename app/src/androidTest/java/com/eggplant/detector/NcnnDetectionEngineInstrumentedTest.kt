@@ -11,6 +11,7 @@ import com.eggplant.detector.detection.ModelMetadata
 import com.eggplant.detector.detection.NcnnDetectionEngine
 import com.eggplant.detector.detection.RgbFrame
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -25,7 +26,7 @@ class NcnnDetectionEngineInstrumentedTest {
             InstrumentationRegistry.getArguments().getString("realModel") == "true",
         )
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val bitmap = requireNotNull(BitmapFactory.decodeResource(context.resources, R.drawable.disease_leaf_spot))
+        val bitmap = requireNotNull(BitmapFactory.decodeResource(context.resources, R.drawable.hero_leaf))
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
@@ -56,6 +57,11 @@ class NcnnDetectionEngineInstrumentedTest {
             ).getOrThrow()
 
             assertTrue(result.inferenceMillis >= 0L)
+            assertFalse("The packaged positive fixture must produce a detection.", result.detections.isEmpty())
+            assertTrue(
+                "The positive leaf fixture must include Leaf-Spot.",
+                result.detections.any { it.modelClass.diseaseId == "leaf-spot" },
+            )
             assertTrue(result.detections.all { it.modelClass in ModelMetadata.EGGPLANT_YOLO26M.classes })
             engine.close()
 

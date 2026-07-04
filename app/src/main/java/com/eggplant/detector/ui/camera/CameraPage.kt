@@ -68,6 +68,8 @@ import com.eggplant.detector.R
 import com.eggplant.detector.camera.CameraAnalysisState
 import com.eggplant.detector.camera.CameraDetectionController
 import com.eggplant.detector.camera.CameraScene
+import com.eggplant.detector.camera.StillImageOutcome
+import com.eggplant.detector.camera.toStillImageOutcome
 import com.eggplant.detector.detection.DetectionBox
 import com.eggplant.detector.detection.DetectionStatus
 import com.eggplant.detector.detection.EngineState
@@ -88,6 +90,7 @@ fun CameraPage(
     val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
     val galleryOpenFailed = stringResource(R.string.gallery_open_failed)
     val captureFailed = stringResource(R.string.capture_failed)
+    val noSupportedDiseaseFound = stringResource(R.string.no_supported_disease_found)
     var cameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
@@ -138,16 +141,38 @@ fun CameraPage(
         viewModel.openDetectionScene(scene, primary, afterReady)
     }
 
+    fun handleStillResult(result: Result<CameraScene>, fallbackError: String) {
+        when (val outcome = result.toStillImageOutcome(fallbackError)) {
+            is StillImageOutcome.Disease -> openScene(outcome.scene, outcome.primary, onResult)
+            is StillImageOutcome.Healthy -> {
+                cameraState = cameraState.copy(
+                    status = DetectionStatus.HEALTHY,
+                    visibleDetections = emptyList(),
+                    stableDetections = emptyList(),
+                    saveEligible = false,
+                    error = null,
+                )
+            }
+            is StillImageOutcome.NoMatch -> {
+                cameraState = cameraState.copy(
+                    status = DetectionStatus.SEARCHING,
+                    visibleDetections = emptyList(),
+                    stableDetections = emptyList(),
+                    saveEligible = false,
+                    error = noSupportedDiseaseFound,
+                )
+            }
+            is StillImageOutcome.Failure -> cameraState = cameraState.copy(error = outcome.message)
+        }
+    }
+
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
             runCatching { context.decodeGalleryBitmap(uri) }
                 .onSuccess { bitmap ->
                     controller?.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
                         bitmap.recycle()
-                        result.onSuccess { scene ->
-                            val primary = scene.stability.stableDetections.maxByOrNull { it.confidence }
-                            if (primary != null) openScene(scene, primary, onResult)
-                        }
+                        handleStillResult(result, galleryOpenFailed)
                     }
                 }
                 .onFailure { cameraState = cameraState.copy(error = it.message ?: galleryOpenFailed) }
@@ -186,12 +211,7 @@ fun CameraPage(
             },
             onCapture = {
                 controller?.capturePhoto { result ->
-                    result.onSuccess { scene ->
-                        val primary = scene.stability.stableDetections.maxByOrNull { it.confidence }
-                        if (primary != null) openScene(scene, primary, onResult)
-                    }.onFailure {
-                        cameraState = cameraState.copy(error = it.message ?: captureFailed)
-                    }
+                    handleStillResult(result, captureFailed)
                 }
             },
             onSave = {

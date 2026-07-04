@@ -2,6 +2,7 @@ package com.eggplant.detector.camera
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class FrameImageUtilsTest {
@@ -36,6 +37,15 @@ class FrameImageUtilsTest {
             ),
             rotated.rgbBytes,
         )
+    }
+
+    @Test
+    fun `zero degree rotation reuses the already upright rgb buffer`() {
+        val source = byteArrayOf(1, 2, 3, 4, 5, 6)
+
+        val rotated = FrameImageUtils.rotateRgb(source, width = 2, height = 1, rotationDegrees = 0)
+
+        assertSame(source, rotated.rgbBytes)
     }
 
     @Test

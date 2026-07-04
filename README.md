@@ -45,6 +45,8 @@ The project has one `app` module, one `MainActivity`, Navigation Compose, Camera
 
 The packaged FP16 NCNN model is checksum-verified before loading. Live analysis uses latest-frame backpressure and stability requires three matching frames over at least 1.25 seconds.
 
+Version 1.1 calibrates the confidence threshold to the exported NCNN score distribution, makes Gallery/capture no-match and failure states visible, uses a 640×480 upright analysis stream, and defaults to CPU inference for consistent mobile behavior. These runtime changes do not replace or retrain the accepted YOLO26m weights.
+
 ## Validation Boundary
 
 Android unit, migration, build, and native fixture checks can run locally. Final accuracy parity requires the missing labeled `valid/images`, `valid/labels`, `test/images`, and `test/labels` folders. The ≤200 ms median / ≤350 ms p95 performance gate and 15-minute endurance run require the target Infinix HOT 60 Pro+ over USB debugging.

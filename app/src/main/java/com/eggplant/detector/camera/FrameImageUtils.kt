@@ -38,7 +38,7 @@ object FrameImageUtils {
     ): RotatedRgb {
         require(rgbBytes.size == width * height * 3)
         require(rotationDegrees in setOf(0, 90, 180, 270))
-        if (rotationDegrees == 0) return RotatedRgb(width, height, rgbBytes.copyOf())
+        if (rotationDegrees == 0) return RotatedRgb(width, height, rgbBytes)
         val outputWidth = if (rotationDegrees in setOf(90, 270)) height else width
         val outputHeight = if (rotationDegrees in setOf(90, 270)) width else height
         val output = ByteArray(rgbBytes.size)

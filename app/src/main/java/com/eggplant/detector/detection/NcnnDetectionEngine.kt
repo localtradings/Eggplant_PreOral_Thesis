@@ -1,8 +1,9 @@
 package com.eggplant.detector.detection
 
 import android.content.Context
-import android.os.Build
 import android.os.SystemClock
+import android.util.Log
+import com.eggplant.detector.BuildConfig
 import java.io.File
 import java.security.MessageDigest
 
@@ -10,7 +11,7 @@ class NcnnDetectionEngine(
     context: Context,
     private val metadata: ModelMetadata = ModelMetadata.EGGPLANT_YOLO26M,
     private val bridge: NcnnBridge = NativeNcnnBridge,
-    private val preferVulkan: Boolean = !isProbablyEmulator(),
+    private val preferVulkan: Boolean = false,
 ) : DetectionEngine {
     private val appContext = context.applicationContext
     private var nativeHandle = 0L
@@ -36,13 +37,14 @@ class NcnnDetectionEngine(
                 destination = File(modelDir, "model.ncnn.bin"),
                 expectedSha256 = metadata.binSha256,
             )
+            val useVulkan = preferVulkan && bridge.hasVulkan()
             nativeHandle = if (bridge === NativeNcnnBridge) {
                 synchronized(sharedNativeLock) {
                     if (sharedNativeHandle == 0L) {
                         sharedNativeHandle = bridge.create(
                             paramPath = param.absolutePath,
                             binPath = weights.absolutePath,
-                            useVulkan = preferVulkan && bridge.hasVulkan(),
+                            useVulkan = useVulkan,
                         )
                     }
                     sharedNativeHandle
@@ -51,12 +53,13 @@ class NcnnDetectionEngine(
                 bridge.create(
                     paramPath = param.absolutePath,
                     binPath = weights.absolutePath,
-                    useVulkan = preferVulkan && bridge.hasVulkan(),
+                    useVulkan = useVulkan,
                 )
             }
             check(nativeHandle != 0L) { "NCNN rejected the packaged model." }
             lastError = null
             state = EngineState.READY
+            debugLog("initialized backend=${if (useVulkan) "vulkan" else "cpu"} threshold=${metadata.confidenceThreshold}")
             state
         } catch (error: Throwable) {
             nativeHandle = 0L
@@ -84,13 +87,18 @@ class NcnnDetectionEngine(
             }
             val nativeValues = if (bridge === NativeNcnnBridge) synchronized(sharedNativeLock) { inference() } else inference()
             val elapsedMillis = (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000
-            DetectionFrame(
+            val result = DetectionFrame(
                 detections = NativeDetectionMapper.map(nativeValues, frame.width, frame.height, metadata),
                 timestampMillis = frame.timestampMillis,
                 inferenceMillis = elapsedMillis,
                 source = frame.source,
                 sceneToken = frame.sceneToken,
             )
+            debugLog(
+                "source=${frame.source} frame=${frame.width}x${frame.height} " +
+                    "inferenceMs=$elapsedMillis detections=${result.detections.size}",
+            )
+            result
         }
     }
 
@@ -134,20 +142,17 @@ class NcnnDetectionEngine(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun debugLog(message: String) {
+        if (BuildConfig.DEBUG) Log.d(LOG_TAG, message)
+    }
+
     companion object {
         private const val ASSET_ROOT = "models/eggplant-yolo26m"
+        private const val LOG_TAG = "EggplantDetection"
         private val sharedNativeLock = Any()
         private var sharedNativeHandle = 0L
     }
 }
-
-private fun isProbablyEmulator(): Boolean =
-    Build.FINGERPRINT.startsWith("generic") ||
-        Build.FINGERPRINT.contains("emulator", ignoreCase = true) ||
-        Build.MODEL.contains("Emulator", ignoreCase = true) ||
-        Build.MODEL.contains("Android SDK built for", ignoreCase = true) ||
-        Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
-        Build.HARDWARE.contains("goldfish", ignoreCase = true)
 
 interface NcnnBridge {
     fun hasVulkan(): Boolean

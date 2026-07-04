@@ -12,7 +12,7 @@ class ModelMetadataTest {
         val metadata = ModelMetadata.EGGPLANT_YOLO26M
 
         assertEquals(640, metadata.inputSize)
-        assertEquals(0.5f, metadata.confidenceThreshold)
+        assertEquals(0.2f, metadata.confidenceThreshold)
         assertEquals("ncnn-20260526", metadata.runtimeVersion)
         assertEquals(
             listOf(

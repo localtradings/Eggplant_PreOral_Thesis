@@ -125,5 +125,6 @@
     <string name="allow_camera">Payagan ang kamera</string>
     <string name="gallery_open_failed">Hindi mabuksan ang napiling larawan.</string>
     <string name="capture_failed">Hindi makakuha ng larawan.</string>
+    <string name="no_supported_disease_found">Walang suportadong sakit ng talong na nakita sa larawang ito. Subukan ang mas malapit at maliwanag na larawan.</string>
     <string name="detection_box_description">%1$s, kumpiyansa %2$d%%</string>
 </resources>

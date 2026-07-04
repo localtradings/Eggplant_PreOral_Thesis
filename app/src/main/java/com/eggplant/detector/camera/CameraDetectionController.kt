@@ -127,6 +127,7 @@ class CameraDetectionController(
     fun analyzeBitmap(bitmap: Bitmap, source: InputSource, onComplete: (Result<CameraScene>) -> Unit) {
         analysisExecutor.execute {
             val result = runCatching { detectBitmap(bitmap, source) }
+            result.onSuccess(::emitStillScene)
             mainExecutor.execute { onComplete(result) }
         }
     }
@@ -162,7 +163,15 @@ class CameraDetectionController(
     }
 
     private fun bindCamera(previewView: PreviewView) {
-        val resolutionSelector = ResolutionSelector.Builder()
+        val analysisResolutionSelector = ResolutionSelector.Builder()
+            .setResolutionStrategy(
+                ResolutionStrategy(
+                    Size(640, 480),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                ),
+            )
+            .build()
+        val captureResolutionSelector = ResolutionSelector.Builder()
             .setResolutionStrategy(
                 ResolutionStrategy(
                     Size(1280, 720),
@@ -172,15 +181,17 @@ class CameraDetectionController(
             .build()
         val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
         val analysis = ImageAnalysis.Builder()
-            .setResolutionSelector(resolutionSelector)
+            .setResolutionSelector(analysisResolutionSelector)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+            .setOutputImageRotationEnabled(true)
+            .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
             .build()
             .also { useCase -> useCase.setAnalyzer(analysisExecutor, ::analyzeImage) }
         val capture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
-            .setResolutionSelector(resolutionSelector)
+            .setResolutionSelector(captureResolutionSelector)
             .build()
         provider?.unbindAll()
         camera = provider?.bindToLifecycle(
