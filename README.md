@@ -35,7 +35,9 @@ The release task currently signs a local thesis-demo APK with the standard debug
 
 ## Architecture
 
-The project has one `app` module, one `MainActivity`, Navigation Compose, CameraX, a lifecycle-aware `DetectionEngine`, JNI/NCNN inference, an activity-scoped `AppViewModel`, and a local repository backed by Room. Database rows retain stable disease IDs and grouped detections:
+The project has one `app` module, one `MainActivity`, Navigation Compose, CameraX, a lifecycle-aware `DetectionEngine`, JNI/NCNN inference, an activity-scoped `EggplantAppViewModel`, and an `EggplantRepository` backed by Room. Runtime code is grouped by app shell, shared core utilities, data, detection, domain models, and user-facing features. See [Project Structure](docs/PROJECT_STRUCTURE.md) for the directory map.
+
+Database rows retain stable disease IDs and grouped detections:
 
 - disease ID
 - confidence
