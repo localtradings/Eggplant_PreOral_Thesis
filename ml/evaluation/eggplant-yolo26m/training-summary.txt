@@ -1,0 +1,36 @@
+Eggplant Disease Detection - YOLO26m Training Result
+
+Model:
+- YOLO26m
+- Image size: 640
+- Epochs: 300
+- Batch: 96
+- GPUs: 3x RTX 5090
+- Training time: 6.781 hours
+
+Dataset:
+- Total images: 24,927
+- Total boxes: 86,620
+- Classes: 10
+
+Overall validation:
+- Precision: 0.811
+- Recall: 0.742
+- mAP50: 0.764
+- mAP50-95: 0.463
+
+Strong classes:
+- Healthy Plant
+- Insect-Pest
+- Healthy Leaf
+- Fruit_borer
+- Fruit_Rot
+- Mosaic
+
+Weak classes:
+- White-Mold
+- Leaf-Spot
+- Wilt
+
+Best model:
+weights/best.pt

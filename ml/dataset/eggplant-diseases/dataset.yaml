@@ -1,0 +1,16 @@
+path: /workspace/eggplant_disease_yolo/final_eggplant_diseases-1-detect-clean
+train: train/images
+val: valid/images
+test: test/images
+names:
+- Fruit_Rot
+- Fruit_borer
+- Healthy Leaf
+- Healthy Plant
+- Insect-Pest
+- Leaf-Spot
+- Melon_Thrips
+- Mosaic
+- White-Mold
+- Wilt
+nc: 10
