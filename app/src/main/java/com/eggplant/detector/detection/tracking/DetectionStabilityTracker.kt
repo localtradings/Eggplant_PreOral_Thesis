@@ -80,8 +80,9 @@ class DetectionStabilityTracker(
         return StabilityResult(
             status = status,
             stableDetections = stableDiseases,
-            visibleDetections = visible.filterNot { it.modelClass.isHealthy },
+            visibleDetections = visible,
             saveEligible = saveArmed && stableDiseases.isNotEmpty(),
+            confirmedDetections = stable,
         )
     }
 

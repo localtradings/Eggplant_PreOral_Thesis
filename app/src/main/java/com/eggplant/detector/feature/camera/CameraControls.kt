@@ -63,6 +63,8 @@ internal fun CameraStatus(state: CameraAnalysisState, modifier: Modifier = Modif
         state.error != null -> state.error
         state.engineState == EngineState.UNINITIALIZED -> stringResource(R.string.loading_model)
         state.engineState != EngineState.READY -> stringResource(R.string.detection_unavailable)
+        state.isStillImageProcessing -> stringResource(R.string.analyzing)
+        state.visibleDetections.isNotEmpty() && state.confirmedDetections.isEmpty() -> stringResource(R.string.analyzing)
         state.status == DetectionStatus.HEALTHY -> stringResource(R.string.no_disease_detected)
         state.status == DetectionStatus.DISEASE_DETECTED -> stringResource(R.string.disease_detected_tap)
         else -> stringResource(R.string.point_camera)
@@ -75,6 +77,7 @@ internal fun CameraStatus(state: CameraAnalysisState, modifier: Modifier = Modif
 @Composable
 internal fun CameraBottomBar(
     saveEnabled: Boolean,
+    processing: Boolean,
     onGallery: () -> Unit,
     onCapture: () -> Unit,
     onSave: () -> Unit,
@@ -86,9 +89,9 @@ internal fun CameraBottomBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        CameraControl(Icons.Outlined.Collections, stringResource(R.string.choose_gallery), onGallery)
+        CameraControl(Icons.Outlined.Collections, stringResource(R.string.choose_gallery), onGallery, enabled = !processing)
         FloatingActionButton(
-            onClick = onCapture,
+            onClick = { if (!processing) onCapture() },
             modifier = Modifier.size(76.dp).semantics { contentDescription = captureDescription }.border(4.dp, Color.White.copy(alpha = .7f), CircleShape),
             containerColor = Color.White,
             contentColor = MaterialTheme.colorScheme.primary,
@@ -96,7 +99,7 @@ internal fun CameraBottomBar(
         ) {
             Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(34.dp))
         }
-        Button(onClick = onSave, enabled = saveEnabled, shape = RoundedCornerShape(16.dp)) {
+        Button(onClick = onSave, enabled = saveEnabled && !processing, shape = RoundedCornerShape(16.dp)) {
             Text(stringResource(R.string.save_scan))
         }
     }
@@ -120,9 +123,9 @@ internal fun CameraPermissionRequired(permissionRequested: Boolean, onRequest: (
 }
 
 @Composable
-private fun CameraControl(icon: ImageVector, description: String, onClick: () -> Unit) {
+private fun CameraControl(icon: ImageVector, description: String, onClick: () -> Unit, enabled: Boolean = true) {
     Surface(color = Color.Black.copy(alpha = .45f), shape = CircleShape) {
-        IconButton(onClick = onClick, modifier = Modifier.size(52.dp)) {
+        IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(52.dp)) {
             Icon(icon, contentDescription = description, tint = Color.White)
         }
     }

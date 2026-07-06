@@ -18,6 +18,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.eggplant.detector.detection.api.DetectionEngine
+import com.eggplant.detector.detection.api.DetectionClassPolicy
 import com.eggplant.detector.detection.api.DetectionStatus
 import com.eggplant.detector.detection.api.EngineState
 import com.eggplant.detector.detection.api.InputSource
@@ -42,6 +43,7 @@ class CameraController(
     private var imageAnalysis: ImageAnalysis? = null
     private var imageCapture: ImageCapture? = null
     @Volatile private var paused = false
+    @Volatile private var classPolicy = DetectionClassPolicy()
     @Volatile private var latestScene: CameraScene? = null
     @Volatile private var state = CameraAnalysisState()
 
@@ -78,6 +80,23 @@ class CameraController(
     }
 
     fun currentScene(): CameraScene? = latestScene
+
+    fun updateClassPolicy(policy: DetectionClassPolicy) {
+        if (classPolicy == policy) return
+        classPolicy = policy
+        tracker.reset()
+        latestScene = null
+        emit(
+            state.copy(
+                status = DetectionStatus.SEARCHING,
+                visibleDetections = emptyList(),
+                stableDetections = emptyList(),
+                confirmedDetections = emptyList(),
+                saveEligible = false,
+                error = null,
+            ),
+        )
+    }
 
     fun markSaved() {
         tracker.markSaved()
@@ -206,7 +225,8 @@ class CameraController(
                 source = InputSource.LIVE,
                 sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
             )
-            val detection = engine.detect(rgbFrame).getOrThrow()
+            val rawDetection = engine.detect(rgbFrame).getOrThrow()
+            val detection = rawDetection.copy(detections = classPolicy.filter(rawDetection.detections))
             val stability = tracker.update(detection)
             latestScene = CameraScene(rgbFrame, detection, stability)
             emit(
@@ -215,6 +235,7 @@ class CameraController(
                     status = stability.status,
                     visibleDetections = stability.visibleDetections,
                     stableDetections = stability.stableDetections,
+                    confirmedDetections = stability.confirmedDetections,
                     saveEligible = stability.saveEligible,
                     inferenceMillis = detection.inferenceMillis,
                     frameWidth = rotated.width,
@@ -268,7 +289,8 @@ class CameraController(
             rgbBytes = rotated.rgbBytes,
             sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
         )
-        val detection = engine.detect(rgb).getOrThrow()
+        val rawDetection = engine.detect(rgb).getOrThrow()
+        val detection = rawDetection.copy(detections = classPolicy.filter(rawDetection.detections))
         val diseases = detection.detections.filterNot { it.modelClass.isHealthy }
         val status = when {
             diseases.isNotEmpty() -> DetectionStatus.DISEASE_DETECTED
@@ -278,7 +300,13 @@ class CameraController(
         return CameraScene(
             rgb,
             detection,
-            StabilityResult(status, diseases, diseases, diseases.isNotEmpty()),
+            StabilityResult(
+                status = status,
+                stableDetections = diseases,
+                visibleDetections = detection.detections,
+                saveEligible = diseases.isNotEmpty(),
+                confirmedDetections = detection.detections,
+            ),
         )
     }
 
@@ -290,6 +318,7 @@ class CameraController(
                 status = scene.stability.status,
                 visibleDetections = scene.stability.visibleDetections,
                 stableDetections = scene.stability.stableDetections,
+                confirmedDetections = scene.stability.confirmedDetections,
                 saveEligible = scene.stability.saveEligible,
                 inferenceMillis = scene.detectionFrame.inferenceMillis,
                 frameWidth = scene.rgbFrame.width,

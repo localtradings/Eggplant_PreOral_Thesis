@@ -11,6 +11,8 @@ data class AppSettingsEntity(
     val theme: String = "SYSTEM",
     val unitSystem: String = "SYSTEM",
     @ColumnInfo(defaultValue = "0") val autoSaveEnabled: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val detectHealthyLeafEnabled: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val detectHealthyPlantEnabled: Boolean = false,
 ) {
     companion object {
         const val SINGLETON_ID = 1

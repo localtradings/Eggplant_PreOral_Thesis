@@ -108,6 +108,19 @@ val MIGRATION_1_TO_2 = object : Migration(1, 2) {
     }
 }
 
+val MIGRATION_2_TO_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE `app_settings` ADD COLUMN `detectHealthyLeafEnabled` " +
+                "INTEGER NOT NULL DEFAULT 0",
+        )
+        db.execSQL(
+            "ALTER TABLE `app_settings` ADD COLUMN `detectHealthyPlantEnabled` " +
+                "INTEGER NOT NULL DEFAULT 0",
+        )
+    }
+}
+
 private fun seedTechnicalDiseaseRows(database: SupportSQLiteDatabase) {
     val rows: List<Array<Any>> = listOf(
         arrayOf("fruit-rot", 0, "Fruit_Rot", "FRUIT_DISEASE"),

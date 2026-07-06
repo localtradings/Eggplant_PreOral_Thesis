@@ -19,7 +19,8 @@ import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.outlined.Straighten
+import androidx.compose.material.icons.outlined.Eco
+import androidx.compose.material.icons.outlined.Yard
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,8 +42,8 @@ import com.eggplant.detector.BuildConfig
 import com.eggplant.detector.app.LanguagePreference
 import com.eggplant.detector.R
 import com.eggplant.detector.app.ThemePreference
-import com.eggplant.detector.app.UnitPreference
 import com.eggplant.detector.core.ui.components.SettingsRow
+import com.eggplant.detector.core.ui.components.SettingsSwitchRow
 
 @Composable
 fun SettingsScreen(
@@ -54,12 +55,12 @@ fun SettingsScreen(
     onAbout: () -> Unit,
 ) {
     val theme by viewModel.themePreference.collectAsState()
-    val units by viewModel.unitPreference.collectAsState()
     val language by viewModel.languagePreference.collectAsState()
     val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
+    val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
+    val detectHealthyPlantEnabled by viewModel.detectHealthyPlantEnabled.collectAsState()
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
-    var showUnitsDialog by remember { mutableStateOf(false) }
     val languageOptions = listOf(
         LanguagePreference.ENGLISH to stringResource(R.string.english),
         LanguagePreference.FILIPINO to stringResource(R.string.filipino),
@@ -69,12 +70,6 @@ fun SettingsScreen(
         ThemePreference.DARK to stringResource(R.string.dark),
         ThemePreference.SYSTEM to stringResource(R.string.system_default),
     )
-    val unitOptions = listOf(
-        UnitPreference.SYSTEM to stringResource(R.string.system_default),
-        UnitPreference.METRIC to stringResource(R.string.metric_examples),
-        UnitPreference.IMPERIAL to stringResource(R.string.imperial_examples),
-    )
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -105,13 +100,31 @@ fun SettingsScreen(
             HorizontalDivider()
             SettingsRow(stringResource(R.string.theme), Icons.Outlined.DarkMode, themeLabel(theme)) { showThemeDialog = true }
             HorizontalDivider()
-            SettingsRow(stringResource(R.string.units), Icons.Outlined.Straighten, unitLabel(units)) { showUnitsDialog = true }
-            HorizontalDivider()
             SettingsRow(
                 stringResource(R.string.history_saving),
                 Icons.Outlined.Save,
                 stringResource(if (autoSaveEnabled) R.string.automatic_save else R.string.manual_save),
             ) { viewModel.setAutoSave(!autoSaveEnabled) }
+            HorizontalDivider()
+            SettingsSwitchRow(
+                title = stringResource(R.string.detect_healthy_leaf),
+                description = stringResource(R.string.detect_healthy_leaf_description),
+                icon = Icons.Outlined.Eco,
+                checked = detectHealthyLeafEnabled,
+                onCheckedChange = viewModel::setDetectHealthyLeaf,
+                enabledLabel = stringResource(R.string.on),
+                disabledLabel = stringResource(R.string.off),
+            )
+            HorizontalDivider()
+            SettingsSwitchRow(
+                title = stringResource(R.string.detect_healthy_plant),
+                description = stringResource(R.string.detect_healthy_plant_description),
+                icon = Icons.Outlined.Yard,
+                checked = detectHealthyPlantEnabled,
+                onCheckedChange = viewModel::setDetectHealthyPlant,
+                enabledLabel = stringResource(R.string.on),
+                disabledLabel = stringResource(R.string.off),
+            )
         }
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -159,18 +172,6 @@ fun SettingsScreen(
             onDismiss = { showThemeDialog = false },
         )
     }
-    if (showUnitsDialog) {
-        ChoiceDialog(
-            title = stringResource(R.string.units),
-            options = unitOptions,
-            selected = units,
-            onSelect = { choice ->
-                viewModel.setUnits(choice)
-                showUnitsDialog = false
-            },
-            onDismiss = { showUnitsDialog = false },
-        )
-    }
 }
 
 @Composable
@@ -208,11 +209,4 @@ private fun themeLabel(preference: ThemePreference): String = when (preference) 
     ThemePreference.LIGHT -> stringResource(R.string.light)
     ThemePreference.DARK -> stringResource(R.string.dark)
     ThemePreference.SYSTEM -> stringResource(R.string.system_default)
-}
-
-@Composable
-private fun unitLabel(preference: UnitPreference): String = when (preference) {
-    UnitPreference.SYSTEM -> stringResource(R.string.system_default)
-    UnitPreference.METRIC -> stringResource(R.string.metric)
-    UnitPreference.IMPERIAL -> stringResource(R.string.imperial)
 }

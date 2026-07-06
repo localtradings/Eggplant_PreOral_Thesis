@@ -50,24 +50,37 @@ fun EggplantNavigation(viewModel: EggplantAppViewModel) {
     val homeListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    fun navigateTopLevel(route: String) {
+        if (route == currentRoute) {
+            if (route == Routes.HOME) scope.launch { homeListState.scrollToItem(0) }
+            return
+        }
+        if (route == Routes.HOME) {
+            val returnedToHome = navController.popBackStack(Routes.HOME, inclusive = false)
+            if (!returnedToHome) {
+                navController.navigate(Routes.HOME) {
+                    popUpTo(navController.graph.findStartDestination().id)
+                    launchSingleTop = true
+                }
+            }
+            scope.launch { homeListState.scrollToItem(0) }
+            return
+        }
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     Scaffold(
         bottomBar = {
             if (showBottomBar) {
                 BottomNavigationBar(currentRoute = currentRoute) { route ->
-                    if (route == Routes.HOME) {
-                        scope.launch { homeListState.scrollToItem(0) }
-                    }
-                    if (route == currentRoute) {
-                        return@BottomNavigationBar
-                    }
                     if (route == Routes.CAMERA) {
                         navController.navigate(route)
                     } else {
-                        navController.navigate(route) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
+                        navigateTopLevel(route)
                     }
                 }
             }
@@ -83,8 +96,8 @@ fun EggplantNavigation(viewModel: EggplantAppViewModel) {
                 HomeScreen(
                     viewModel = viewModel,
                     onScan = { navController.navigate(Routes.CAMERA) },
-                    onLibrary = { navController.navigate(Routes.LIBRARY) },
-                    onHistory = { navController.navigate(Routes.HISTORY) },
+                    onLibrary = { navigateTopLevel(Routes.LIBRARY) },
+                    onHistory = { navigateTopLevel(Routes.HISTORY) },
                     onNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                     onCareGuide = { navController.navigate(Routes.SCAN_TIPS) },
                     onOfflineUse = { navController.navigate(Routes.OFFLINE_STATUS) },

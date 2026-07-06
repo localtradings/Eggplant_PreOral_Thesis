@@ -18,11 +18,13 @@ data class CameraAnalysisState(
     val status: DetectionStatus = DetectionStatus.SEARCHING,
     val visibleDetections: List<DetectionBox> = emptyList(),
     val stableDetections: List<DetectionBox> = emptyList(),
+    val confirmedDetections: List<DetectionBox> = emptyList(),
     val saveEligible: Boolean = false,
     val inferenceMillis: Long? = null,
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
     val torchSupported: Boolean = false,
     val torchEnabled: Boolean = false,
+    val isStillImageProcessing: Boolean = false,
     val error: String? = null,
 )

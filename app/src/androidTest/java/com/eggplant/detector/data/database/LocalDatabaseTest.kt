@@ -11,6 +11,7 @@ import com.eggplant.detector.data.catalog.DiseaseCatalogSeed
 import com.eggplant.detector.data.database.entity.AppSettingsEntity
 import com.eggplant.detector.data.database.EggplantDatabase
 import com.eggplant.detector.data.database.migration.MIGRATION_1_TO_2
+import com.eggplant.detector.data.database.migration.MIGRATION_2_TO_3
 import com.eggplant.detector.data.database.entity.NotificationStateEntity
 import com.eggplant.detector.data.database.entity.ScanDetectionEntity
 import com.eggplant.detector.data.database.entity.LegacyScanRecordEntity
@@ -63,12 +64,20 @@ class LocalDatabaseTest {
             ),
         )
         database.settingsDao().upsert(
-            AppSettingsEntity(languageTag = "fil", theme = "DARK", unitSystem = "IMPERIAL"),
+            AppSettingsEntity(
+                languageTag = "fil",
+                theme = "DARK",
+                unitSystem = "IMPERIAL",
+                detectHealthyLeafEnabled = true,
+                detectHealthyPlantEnabled = false,
+            ),
         )
         database.notificationDao().upsert(NotificationStateEntity("welcome", isRead = true))
 
         assertEquals("scan-1", database.scanDao().observeAll().first().single().id)
         assertEquals("fil", database.settingsDao().observe().first()?.languageTag)
+        assertTrue(database.settingsDao().observe().first()?.detectHealthyLeafEnabled == true)
+        assertTrue(database.settingsDao().observe().first()?.detectHealthyPlantEnabled == false)
         assertTrue(database.notificationDao().observeAll().first().single().isRead)
     }
 
@@ -142,6 +151,34 @@ class LocalDatabaseTest {
             migrated.query("SELECT COUNT(*) FROM scan_detections WHERE sessionId = 'legacy-1'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals(1, cursor.getInt(0))
+            }
+        }
+    }
+
+    @Test
+    fun migrationTwoToThreePreservesSettingsAndDisablesHealthyClassesByDefault() {
+        val databaseName = "migration-2-3"
+        migrationHelper.createDatabase(databaseName, 2).apply {
+            execSQL(
+                "INSERT INTO app_settings " +
+                    "(id, languageTag, theme, unitSystem, autoSaveEnabled) " +
+                    "VALUES (1, 'fil', 'DARK', 'SYSTEM', 1)",
+            )
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(databaseName, 3, true, MIGRATION_2_TO_3).use { migrated ->
+            migrated.query(
+                "SELECT languageTag, theme, autoSaveEnabled, " +
+                    "detectHealthyLeafEnabled, detectHealthyPlantEnabled " +
+                    "FROM app_settings WHERE id = 1",
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("fil", cursor.getString(0))
+                assertEquals("DARK", cursor.getString(1))
+                assertEquals(1, cursor.getInt(2))
+                assertEquals(0, cursor.getInt(3))
+                assertEquals(0, cursor.getInt(4))
             }
         }
     }

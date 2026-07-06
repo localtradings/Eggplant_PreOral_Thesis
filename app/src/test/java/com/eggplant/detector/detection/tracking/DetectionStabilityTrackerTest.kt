@@ -48,13 +48,29 @@ class DetectionStabilityTrackerTest {
     fun `healthy stability reports status but is never save eligible`() {
         val tracker = DetectionStabilityTracker()
 
-        tracker.update(frame(0, healthyLeaf))
+        val tentative = tracker.update(frame(0, healthyLeaf))
         tracker.update(frame(700, healthyLeaf))
         val result = tracker.update(frame(1_250, healthyLeaf))
 
+        assertEquals(listOf(healthyLeaf), tentative.visibleDetections)
+        assertTrue(tentative.confirmedDetections.isEmpty())
         assertEquals(DetectionStatus.HEALTHY, result.status)
         assertFalse(result.saveEligible)
         assertTrue(result.stableDetections.isEmpty())
+        assertEquals(listOf(healthyLeaf), result.confirmedDetections)
+    }
+
+    @Test
+    fun `reset clears a pending healthy track`() {
+        val tracker = DetectionStabilityTracker()
+        tracker.update(frame(0, healthyLeaf))
+        tracker.update(frame(700, healthyLeaf))
+
+        tracker.reset()
+        val afterReset = tracker.update(frame(1_250, healthyLeaf))
+
+        assertTrue(afterReset.confirmedDetections.isEmpty())
+        assertEquals(DetectionStatus.SEARCHING, afterReset.status)
     }
 
     @Test

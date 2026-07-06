@@ -29,7 +29,7 @@ import com.eggplant.detector.data.database.entity.TreatmentEntity
         ScanSessionEntity::class,
         ScanDetectionEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class EggplantDatabase : RoomDatabase() {

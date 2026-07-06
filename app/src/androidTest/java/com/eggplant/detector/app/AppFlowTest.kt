@@ -25,6 +25,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import com.eggplant.detector.app.ResultWarning
 
 class AppFlowTest {
     @get:Rule
@@ -75,9 +76,21 @@ class AppFlowTest {
 
         composeRule.onNodeWithText("Personalize your local app experience").assertIsDisplayed()
         composeRule.onNodeWithText("Detection Status").assertIsDisplayed()
+        composeRule.onNodeWithText("Units").assertDoesNotExist()
         composeRule.onNodeWithText("Filipino (Tagalog)").assertDoesNotExist()
         composeRule.onNodeWithText("Export History").assertDoesNotExist()
         composeRule.onNodeWithText("Confidence", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun healthyDetectionSwitchesAreIndependentAndDefaultOff() {
+        composeRule.onNodeWithContentDescription("Navigate to Settings").performClick()
+
+        composeRule.onNodeWithText("Detect Healthy Leaf").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Detect Healthy Plant").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Detect Healthy Leaf, off").performScrollTo().performClick()
+        composeRule.onNodeWithContentDescription("Detect Healthy Leaf, on").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Detect Healthy Plant, off").assertIsDisplayed()
     }
 
     @Test
@@ -97,6 +110,21 @@ class AppFlowTest {
         composeRule.onNodeWithContentDescription("Navigate to Home").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Eggplant").assertIsDisplayed()
+    }
+
+    @Test
+    fun returningFromLibraryKeepsHomeControlsInteractive() {
+        composeRule.onNodeWithContentDescription("Navigate to Library").performClick()
+        composeRule.onNodeWithContentDescription("Navigate to Home").performClick()
+        composeRule.onNodeWithText("Eggplant").assertIsDisplayed()
+
+        composeRule.onNodeWithContentDescription("Open notifications").performClick()
+        composeRule.onNodeWithText("Notifications").assertIsDisplayed()
+        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Care Guide").performClick()
+        composeRule.onNodeWithText("Clean the lens").assertIsDisplayed()
     }
 
     @Test
@@ -213,6 +241,39 @@ class AppFlowTest {
         assertFalse(completed ?: true)
         assertEquals(SaveState.FAILED, viewModel.saveState.value)
         assertEquals(emptyList<com.eggplant.detector.domain.model.ScanResult>(), viewModel.history.value)
+    }
+
+    @Test
+    fun snapshotFailureStillOpensAUsableResultWithWarning() {
+        val detection = DetectionBox(
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(5)!!,
+            .87f,
+            NormalizedBox(.1f, .1f, .8f, .8f),
+        )
+        val rgb = RgbFrame(2, 2, ByteArray(12), 1, InputSource.GALLERY, 1)
+        val scene = CameraScene(
+            rgb,
+            DetectionFrame(listOf(detection), 1, 1, InputSource.GALLERY, 1),
+            StabilityResult(
+                DetectionStatus.DISEASE_DETECTED,
+                listOf(detection),
+                listOf(detection),
+                true,
+                listOf(detection),
+            ),
+        )
+        val viewModel = EggplantAppViewModel(
+            initialHistory = emptyList(),
+            snapshotStager = { error("Test snapshot failure") },
+        )
+        var ready = false
+
+        viewModel.openDetectionScene(scene, detection) { ready = true }
+        composeRule.waitUntil(5_000) { ready }
+
+        assertEquals("Leaf Spot", viewModel.currentResult.value?.name)
+        assertEquals(null, viewModel.currentResult.value?.imagePath)
+        assertEquals(ResultWarning.SNAPSHOT_UNAVAILABLE, viewModel.resultWarning.value)
     }
 
     private fun grantCameraPermission() {

@@ -8,6 +8,8 @@ import com.eggplant.detector.data.database.entity.ScanSessionWithDetections
 import com.eggplant.detector.data.catalog.DiseaseCatalog
 import com.eggplant.detector.domain.model.ScanCategory
 import com.eggplant.detector.domain.model.ScanResult
+import com.eggplant.detector.domain.model.ScanDetectionResult
+import com.eggplant.detector.detection.api.NormalizedBox
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -76,5 +78,27 @@ class PersistenceMappingTest {
 
         assertEquals("Puting Amag", result.name)
         assertEquals("Puting Amag", result.detections.single().name)
+    }
+
+    @Test
+    fun `healthy display boxes are excluded from disease persistence`() {
+        val result = ScanResult(
+            id = "mixed-session",
+            name = "Leaf Spot",
+            category = ScanCategory.LEAF_DISEASE,
+            confidence = 87,
+            scannedAt = LocalDateTime.of(2026, 7, 7, 10, 0),
+            signs = emptyList(),
+            treatment = "",
+            diseaseId = "leaf-spot",
+            detections = listOf(
+                ScanDetectionResult("disease", "leaf-spot", "Leaf Spot", 5, "Leaf-Spot", 87, NormalizedBox(.1f, .1f, .5f, .5f)),
+                ScanDetectionResult("healthy", "healthy-leaf", "Healthy Leaf", 2, "Healthy Leaf", 91, NormalizedBox(.5f, .1f, .9f, .5f)),
+            ),
+        )
+
+        val (_, detections) = ScanSessionMapper.fromDomain(result)
+
+        assertEquals(listOf("leaf-spot"), detections.map { it.diseaseId })
     }
 }

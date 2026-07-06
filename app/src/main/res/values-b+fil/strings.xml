@@ -52,19 +52,20 @@
     <string name="settings_subtitle">Iangkop ang iyong lokal na karanasan sa app</string>
     <string name="language">Wika</string>
     <string name="theme">Tema</string>
-    <string name="units">Mga Yunit</string>
     <string name="history_saving">Pag-save ng kasaysayan</string>
     <string name="manual_save">Manwal</string>
     <string name="automatic_save">Awtomatiko matapos ang matatag na pagtukoy</string>
+    <string name="detect_healthy_leaf">Tukuyin ang Malusog na Dahon</string>
+    <string name="detect_healthy_leaf_description">Ipakita ang kumpirmadong kahon para sa malusog na dahon ng talong</string>
+    <string name="detect_healthy_plant">Tukuyin ang Malusog na Halaman</string>
+    <string name="detect_healthy_plant_description">Ipakita ang kumpirmadong kahon para sa buong malusog na halaman</string>
+    <string name="on">naka-on</string>
+    <string name="off">naka-off</string>
     <string name="english">English</string>
     <string name="filipino">Filipino (Tagalog)</string>
     <string name="light">Maliwanag</string>
     <string name="dark">Madilim</string>
     <string name="system_default">Ayon sa sistema</string>
-    <string name="metric">Metriko</string>
-    <string name="imperial">Imperyal</string>
-    <string name="metric_examples">Metriko — °C, cm/m, kg, L, ektarya</string>
-    <string name="imperial_examples">Imperyal — °F, in/ft, lb, galon, acre</string>
     <string name="detection_status">Katayuan ng Pagtukoy</string>
     <string name="model_pending">YOLO26m • Offline NCNN</string>
     <string name="scan_quality_tips">Mga Payo sa Malinaw na Scan</string>
@@ -125,6 +126,11 @@
     <string name="allow_camera">Payagan ang kamera</string>
     <string name="gallery_open_failed">Hindi mabuksan ang napiling larawan.</string>
     <string name="capture_failed">Hindi makakuha ng larawan.</string>
+    <string name="snapshot_unavailable_warning">Available ang resulta, pero hindi ma-save ang larawan nito sa device na ito.</string>
     <string name="no_supported_disease_found">Walang suportadong sakit ng talong na nakita sa larawang ito. Subukan ang mas malapit at maliwanag na larawan.</string>
     <string name="detection_box_description">%1$s, kumpiyansa %2$d%%</string>
+    <string name="analyzing">Sinusuri…</string>
+    <string name="analyzing_detection">Sinusuri ang natukoy na bahagi</string>
+    <string name="healthy_leaf_name">Malusog na Dahon</string>
+    <string name="healthy_plant_name">Malusog na Halaman</string>
 </resources>

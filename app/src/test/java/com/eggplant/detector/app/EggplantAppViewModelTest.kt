@@ -11,13 +11,33 @@ import com.eggplant.detector.detection.api.RgbFrame
 import com.eggplant.detector.detection.api.StabilityResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EggplantAppViewModelTest {
     @Test
-    fun `units include a system default option`() {
-        assertEquals("System default", UnitPreference.SYSTEM.displayName)
+    fun `healthy detection controls default off and update independently`() {
+        val viewModel = EggplantAppViewModel()
+
+        assertFalse(viewModel.detectHealthyLeafEnabled.value)
+        assertFalse(viewModel.detectHealthyPlantEnabled.value)
+
+        viewModel.setDetectHealthyLeaf(true)
+        assertTrue(viewModel.detectHealthyLeafEnabled.value)
+        assertFalse(viewModel.detectHealthyPlantEnabled.value)
+
+        viewModel.setDetectHealthyPlant(true)
+        assertTrue(viewModel.detectHealthyLeafEnabled.value)
+        assertTrue(viewModel.detectHealthyPlantEnabled.value)
+    }
+
+    @Test
+    fun `unused unit preference is not part of the application state`() {
+        assertThrows(ClassNotFoundException::class.java) {
+            Class.forName("com.eggplant.detector.app.UnitPreference")
+        }
     }
 
     @Test
@@ -80,6 +100,35 @@ class EggplantAppViewModelTest {
 
         assertEquals("Leaf Spot", viewModel.currentResult.value?.name)
         assertEquals(listOf("leaf-spot", "wilt"), viewModel.currentResult.value?.detections?.map { it.diseaseId })
+    }
+
+    @Test
+    fun `healthy result opens with its class name but cannot be saved`() {
+        val healthyLeaf = DetectionBox(
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(2)!!,
+            0.91f,
+            NormalizedBox(0.1f, 0.2f, 0.5f, 0.7f),
+        )
+        val rgb = RgbFrame(2, 2, ByteArray(12), 10, InputSource.GALLERY, 1)
+        val scene = CameraScene(
+            rgb,
+            DetectionFrame(listOf(healthyLeaf), 10, 100, InputSource.GALLERY, 1),
+            StabilityResult(
+                status = DetectionStatus.HEALTHY,
+                stableDetections = emptyList(),
+                visibleDetections = listOf(healthyLeaf),
+                saveEligible = false,
+                confirmedDetections = listOf(healthyLeaf),
+            ),
+        )
+        val viewModel = EggplantAppViewModel(initialHistory = emptyList())
+
+        viewModel.openDetectionScene(scene, healthyLeaf)
+
+        assertEquals("Healthy Leaf", viewModel.currentResult.value?.name)
+        assertEquals(com.eggplant.detector.domain.model.ScanCategory.NO_DISEASE_DETECTED, viewModel.currentResult.value?.category)
+        assertFalse(viewModel.saveCurrentResult())
+        assertTrue(viewModel.history.value.isEmpty())
     }
 }
 

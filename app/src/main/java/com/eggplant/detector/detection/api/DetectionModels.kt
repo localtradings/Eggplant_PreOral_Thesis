@@ -65,4 +65,5 @@ data class StabilityResult(
     val stableDetections: List<DetectionBox>,
     val visibleDetections: List<DetectionBox>,
     val saveEligible: Boolean,
+    val confirmedDetections: List<DetectionBox> = stableDetections,
 )

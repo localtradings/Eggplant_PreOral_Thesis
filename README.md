@@ -28,9 +28,9 @@ The release task currently signs a local thesis-demo APK with the standard debug
 - Six leaf-disease and two fruit-disease references with stable disease IDs
 - English and Filipino (Tagalog) application localization
 - System default, light, and dark themes
-- System default, metric, and imperial unit preferences
 - On-device Room/SQLite persistence for the localized disease catalog, grouped scan history, settings, and notification read state
 - Manual save by default, with optional scene-deduplicated automatic saving
+- Independent, default-off Healthy Leaf and Healthy Plant detection controls
 - Offline-only runtime with no account, backend, synchronization, analytics, advertisements, payments, or Internet permission
 
 ## Architecture
@@ -47,7 +47,7 @@ Database rows retain stable disease IDs and grouped detections:
 
 The packaged FP16 NCNN model is checksum-verified before loading. Live analysis uses latest-frame backpressure and stability requires three matching frames over at least 1.25 seconds.
 
-Version 1.1 calibrates the confidence threshold to the exported NCNN score distribution, makes Gallery/capture no-match and failure states visible, uses a 640×480 upright analysis stream, and defaults to CPU inference for consistent mobile behavior. These runtime changes do not replace or retrain the accepted YOLO26m weights.
+Version 1.1 calibrates the confidence threshold to `0.20` for the exported NCNN score distribution, makes Gallery/capture no-match and failure states visible, uses a 640×480 upright analysis stream, and defaults to CPU inference for consistent mobile behavior. These runtime changes do not replace or retrain the accepted YOLO26m weights.
 
 ## Validation Boundary
 

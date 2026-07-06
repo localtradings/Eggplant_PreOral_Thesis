@@ -52,19 +52,20 @@
     <string name="settings_subtitle">Personalize your local app experience</string>
     <string name="language">Language</string>
     <string name="theme">Theme</string>
-    <string name="units">Units</string>
     <string name="history_saving">History saving</string>
     <string name="manual_save">Manual</string>
     <string name="automatic_save">Automatic after a stable detection</string>
+    <string name="detect_healthy_leaf">Detect Healthy Leaf</string>
+    <string name="detect_healthy_leaf_description">Show confirmed boxes for healthy eggplant leaves</string>
+    <string name="detect_healthy_plant">Detect Healthy Plant</string>
+    <string name="detect_healthy_plant_description">Show confirmed boxes for a healthy whole plant</string>
+    <string name="on">on</string>
+    <string name="off">off</string>
     <string name="english">English</string>
     <string name="filipino">Filipino (Tagalog)</string>
     <string name="light">Light</string>
     <string name="dark">Dark</string>
     <string name="system_default">System default</string>
-    <string name="metric">Metric</string>
-    <string name="imperial">Imperial</string>
-    <string name="metric_examples">Metric — °C, cm/m, kg, L, hectare</string>
-    <string name="imperial_examples">Imperial — °F, in/ft, lb, gallon, acre</string>
     <string name="detection_status">Detection Status</string>
     <string name="model_pending">YOLO26m • Offline NCNN</string>
     <string name="scan_quality_tips">Scan Quality Tips</string>
@@ -125,6 +126,11 @@
     <string name="allow_camera">Allow camera</string>
     <string name="gallery_open_failed">Could not open the selected image.</string>
     <string name="capture_failed">Could not capture a photo.</string>
+    <string name="snapshot_unavailable_warning">The result is available, but its image could not be stored on this device.</string>
     <string name="no_supported_disease_found">No supported eggplant disease was detected in this image. Try a closer, well-lit photo.</string>
     <string name="detection_box_description">%1$s, confidence %2$d%%</string>
+    <string name="analyzing">Analyzing…</string>
+    <string name="analyzing_detection">Analyzing detection</string>
+    <string name="healthy_leaf_name">Healthy Leaf</string>
+    <string name="healthy_plant_name">Healthy Plant</string>
 </resources>

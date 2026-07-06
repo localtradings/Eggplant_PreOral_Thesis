@@ -29,12 +29,14 @@ class StillImageResultTest {
 
     @Test
     fun `healthy scene remains a successful observable outcome`() {
-        val scene = scene(DetectionStatus.HEALTHY)
+        val healthyLeaf = detection(classIndex = 2, confidence = 0.91f)
+        val scene = scene(DetectionStatus.HEALTHY, healthyLeaf, stableDiseases = emptyList())
 
         val outcome = Result.success(scene).toStillImageResult("fallback")
 
         assertTrue(outcome is StillImageResult.Healthy)
         assertSame(scene, outcome.scene)
+        assertSame(healthyLeaf, (outcome as StillImageResult.Healthy).primary)
     }
 
     @Test
@@ -55,13 +57,23 @@ class StillImageResultTest {
         assertEquals("model unavailable", (outcome as StillImageResult.Failure).message)
     }
 
-    private fun scene(status: DetectionStatus, vararg detections: DetectionBox): CameraScene {
+    private fun scene(
+        status: DetectionStatus,
+        vararg detections: DetectionBox,
+        stableDiseases: List<DetectionBox> = detections.toList(),
+    ): CameraScene {
         val rgb = RgbFrame(1, 1, byteArrayOf(0, 0, 0), 1L, InputSource.GALLERY, 1L)
         val frame = DetectionFrame(detections.toList(), 1L, 10L, InputSource.GALLERY, 1L)
         return CameraScene(
             rgbFrame = rgb,
             detectionFrame = frame,
-            stability = StabilityResult(status, detections.toList(), detections.toList(), detections.isNotEmpty()),
+            stability = StabilityResult(
+                status = status,
+                stableDetections = stableDiseases,
+                visibleDetections = detections.toList(),
+                saveEligible = stableDiseases.isNotEmpty(),
+                confirmedDetections = detections.toList(),
+            ),
         )
     }
 

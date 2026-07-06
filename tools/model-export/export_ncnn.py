@@ -60,7 +60,7 @@ def main() -> None:
         "modelVersion": "eggplant-yolo26m-b96-20260704",
         "runtimeVersion": "ncnn-20260526",
         "inputSize": args.imgsz,
-        "confidenceThreshold": 0.5,
+        "confidenceThreshold": 0.2,
         "paramSha256": sha256(param),
         "binSha256": sha256(weights),
         "labels": LABELS,

@@ -29,12 +29,6 @@ enum class ThemePreference(val displayName: String) {
     SYSTEM("System default"),
 }
 
-enum class UnitPreference(val displayName: String) {
-    SYSTEM("System default"),
-    METRIC("Metric"),
-    IMPERIAL("Imperial"),
-}
-
 enum class LanguagePreference(val languageTag: String, val displayName: String) {
     ENGLISH("en", "English"),
     FILIPINO("fil", "Filipino (Tagalog)"),
@@ -46,11 +40,16 @@ enum class SaveState {
     FAILED,
 }
 
+enum class ResultWarning {
+    SNAPSHOT_UNAVAILABLE,
+}
+
 class EggplantAppViewModel(
     initialHistory: List<ScanResult> = emptyList(),
     private val nowProvider: () -> LocalDateTime = { LocalDateTime.now() },
     private val repository: EggplantRepository? = null,
     scanSaver: (suspend (ScanResult) -> Unit)? = null,
+    private val snapshotStager: (suspend (com.eggplant.detector.detection.api.RgbFrame) -> String?)? = null,
 ) : ViewModel() {
     private val scanSaver = scanSaver ?: repository?.let { localRepository ->
         suspend { result: ScanResult -> localRepository.saveScan(result) }
@@ -70,8 +69,7 @@ class EggplantAppViewModel(
     private val _themePreference = MutableStateFlow(ThemePreference.SYSTEM)
     val themePreference: StateFlow<ThemePreference> = _themePreference.asStateFlow()
 
-    private val _unitPreference = MutableStateFlow(UnitPreference.SYSTEM)
-    val unitPreference: StateFlow<UnitPreference> = _unitPreference.asStateFlow()
+    private var legacyUnitSystem = "SYSTEM"
 
     private val _languagePreference = MutableStateFlow(
         if (java.util.Locale.getDefault().language in setOf("fil", "tl")) LanguagePreference.FILIPINO
@@ -82,11 +80,20 @@ class EggplantAppViewModel(
     private val _autoSaveEnabled = MutableStateFlow(false)
     val autoSaveEnabled: StateFlow<Boolean> = _autoSaveEnabled.asStateFlow()
 
+    private val _detectHealthyLeafEnabled = MutableStateFlow(false)
+    val detectHealthyLeafEnabled: StateFlow<Boolean> = _detectHealthyLeafEnabled.asStateFlow()
+
+    private val _detectHealthyPlantEnabled = MutableStateFlow(false)
+    val detectHealthyPlantEnabled: StateFlow<Boolean> = _detectHealthyPlantEnabled.asStateFlow()
+
     private val _readNotificationKeys = MutableStateFlow<Set<String>>(emptySet())
     val readNotificationKeys: StateFlow<Set<String>> = _readNotificationKeys.asStateFlow()
 
     private val _saveState = MutableStateFlow(SaveState.IDLE)
     val saveState: StateFlow<SaveState> = _saveState.asStateFlow()
+
+    private val _resultWarning = MutableStateFlow<ResultWarning?>(null)
+    val resultWarning: StateFlow<ResultWarning?> = _resultWarning.asStateFlow()
 
     init {
         repository?.let { localRepository ->
@@ -99,11 +106,13 @@ class EggplantAppViewModel(
             viewModelScope.launch {
                 localRepository.settings.collect { settings ->
                     _themePreference.value = enumValueOrDefault(settings.theme, ThemePreference.SYSTEM)
-                    _unitPreference.value = enumValueOrDefault(settings.unitSystem, UnitPreference.SYSTEM)
+                    legacyUnitSystem = settings.unitSystem
                     _languagePreference.value = LanguagePreference.entries.firstOrNull {
                         it.languageTag == settings.languageTag
                     } ?: LanguagePreference.ENGLISH
                     _autoSaveEnabled.value = settings.autoSaveEnabled
+                    _detectHealthyLeafEnabled.value = settings.detectHealthyLeafEnabled
+                    _detectHealthyPlantEnabled.value = settings.detectHealthyPlantEnabled
                 }
             }
             viewModelScope.launch {
@@ -125,26 +134,50 @@ class EggplantAppViewModel(
         onReady: () -> Unit = {},
     ) {
         _saveState.value = SaveState.IDLE
+        _resultWarning.value = null
         val localRepository = repository
-        if (localRepository == null) {
-            _currentResult.value = scene.toScanResult(primary, imagePath = null, _catalog.value, nowProvider())
+        val stageSnapshot = snapshotStager ?: localRepository?.let { repo ->
+            suspend { frame: com.eggplant.detector.detection.api.RgbFrame -> repo.stageSnapshot(frame) }
+        }
+        if (stageSnapshot == null) {
+            _currentResult.value = scene.toScanResult(
+                primary,
+                imagePath = null,
+                _catalog.value,
+                nowProvider(),
+                _languagePreference.value.languageTag,
+            )
             onReady()
             return
         }
         viewModelScope.launch {
-            val imagePath = localRepository.stageSnapshot(scene.rgbFrame)
-            _currentResult.value = scene.toScanResult(primary, imagePath, _catalog.value, nowProvider())
+            val imagePath = runCatching { stageSnapshot(scene.rgbFrame) }
+                .onFailure { _resultWarning.value = ResultWarning.SNAPSHOT_UNAVAILABLE }
+                .getOrNull()
+            _currentResult.value = scene.toScanResult(
+                primary,
+                imagePath,
+                _catalog.value,
+                nowProvider(),
+                _languagePreference.value.languageTag,
+            )
             onReady()
         }
     }
 
     fun openHistoryResult(result: ScanResult) {
+        _resultWarning.value = null
         _currentResult.value = result
     }
 
     fun saveCurrentResult(onComplete: (Boolean) -> Unit = {}): Boolean {
         val result = _currentResult.value
-        if (result == null || _saveState.value == SaveState.SAVING || _history.value.any { it.id == result.id }) {
+        if (
+            result == null ||
+            result.category == ScanCategory.NO_DISEASE_DETECTED ||
+            _saveState.value == SaveState.SAVING ||
+            _history.value.any { it.id == result.id }
+        ) {
             if (result == null) _saveState.value = SaveState.FAILED
             onComplete(false)
             return false
@@ -186,11 +219,6 @@ class EggplantAppViewModel(
         persistSettings()
     }
 
-    fun setUnits(preference: UnitPreference) {
-        _unitPreference.value = preference
-        persistSettings()
-    }
-
     fun setLanguage(preference: LanguagePreference) {
         _languagePreference.value = preference
         persistSettings()
@@ -198,6 +226,16 @@ class EggplantAppViewModel(
 
     fun setAutoSave(enabled: Boolean) {
         _autoSaveEnabled.value = enabled
+        persistSettings()
+    }
+
+    fun setDetectHealthyLeaf(enabled: Boolean) {
+        _detectHealthyLeafEnabled.value = enabled
+        persistSettings()
+    }
+
+    fun setDetectHealthyPlant(enabled: Boolean) {
+        _detectHealthyPlantEnabled.value = enabled
         persistSettings()
     }
 
@@ -217,8 +255,10 @@ class EggplantAppViewModel(
             val settings = AppSettingsEntity(
                 languageTag = _languagePreference.value.languageTag,
                 theme = _themePreference.value.name,
-                unitSystem = _unitPreference.value.name,
+                unitSystem = legacyUnitSystem,
                 autoSaveEnabled = _autoSaveEnabled.value,
+                detectHealthyLeafEnabled = _detectHealthyLeafEnabled.value,
+                detectHealthyPlantEnabled = _detectHealthyPlantEnabled.value,
             )
             viewModelScope.launch { localRepository.saveSettings(settings) }
         }
@@ -239,35 +279,48 @@ private fun CameraScene.toScanResult(
     imagePath: String?,
     catalog: List<com.eggplant.detector.domain.model.Disease>,
     timestamp: LocalDateTime,
+    languageTag: String,
 ): ScanResult {
-    val allDiseases = stability.stableDetections.ifEmpty {
-        detectionFrame.detections.filterNot { it.modelClass.isHealthy }
+    val displayDetections = stability.confirmedDetections.ifEmpty {
+        detectionFrame.detections
     }
-    val primaryDiseaseId = requireNotNull(primary.modelClass.diseaseId)
-    val primaryDisease = requireNotNull(catalog.firstOrNull { it.id == primaryDiseaseId } ?: DiseaseCatalog.byId(primaryDiseaseId))
+    val primaryDiseaseId = primary.modelClass.diseaseId
+    val primaryDisease = primaryDiseaseId?.let { diseaseId ->
+        catalog.firstOrNull { it.id == diseaseId } ?: DiseaseCatalog.byId(diseaseId)
+    }
+    val primaryName = primaryDisease?.name ?: if (primary.modelClass.isHealthy) {
+        healthyDisplayName(primary.modelClass.index, languageTag)
+    } else {
+        primary.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
+    }
     return ScanResult(
         id = UUID.randomUUID().toString(),
-        name = primaryDisease.name,
-        category = when (primaryDisease.type) {
+        name = primaryName,
+        category = when (primaryDisease?.type) {
             DiseaseType.LEAF_DISEASE -> ScanCategory.LEAF_DISEASE
             DiseaseType.FRUIT_DISEASE -> ScanCategory.FRUIT_DISEASE
+            null -> ScanCategory.NO_DISEASE_DETECTED
         },
         confidence = (primary.confidence * 100).roundToInt().coerceIn(0, 100),
         scannedAt = timestamp,
-        signs = primaryDisease.signs,
-        treatment = primaryDisease.treatment,
-        diseaseId = primaryDiseaseId,
+        signs = primaryDisease?.signs.orEmpty(),
+        treatment = primaryDisease?.treatment.orEmpty(),
+        diseaseId = primaryDiseaseId ?: healthyClassId(primary.modelClass.index),
         source = rgbFrame.source.name.lowercase(),
         modelVersion = ModelMetadata.EGGPLANT_YOLO26M.modelVersion,
         imagePath = imagePath,
-        detections = allDiseases.mapIndexed { index, detection ->
-            val diseaseId = requireNotNull(detection.modelClass.diseaseId)
+        detections = displayDetections.mapIndexed { index, detection ->
+            val diseaseId = detection.modelClass.diseaseId ?: healthyClassId(detection.modelClass.index)
             ScanDetectionResult(
                 id = "detection-$index-${UUID.randomUUID()}",
                 diseaseId = diseaseId,
                 name = catalog.firstOrNull { it.id == diseaseId }?.name
                     ?: DiseaseCatalog.byId(diseaseId)?.name
-                    ?: detection.modelClass.modelLabel,
+                    ?: if (detection.modelClass.isHealthy) {
+                        healthyDisplayName(detection.modelClass.index, languageTag)
+                    } else {
+                        detection.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
+                    },
                 modelClassIndex = detection.modelClass.index,
                 modelLabel = detection.modelClass.modelLabel,
                 confidence = (detection.confidence * 100).roundToInt().coerceIn(0, 100),
@@ -275,6 +328,21 @@ private fun CameraScene.toScanResult(
             )
         },
     )
+}
+
+private fun healthyClassId(classIndex: Int): String = when (classIndex) {
+    ModelMetadata.HEALTHY_LEAF_CLASS_INDEX -> "healthy-leaf"
+    ModelMetadata.HEALTHY_PLANT_CLASS_INDEX -> "healthy-plant"
+    else -> error("Unknown healthy model class index: $classIndex")
+}
+
+private fun healthyDisplayName(classIndex: Int, languageTag: String): String {
+    val filipino = languageTag in setOf("fil", "tl")
+    return when (classIndex) {
+        ModelMetadata.HEALTHY_LEAF_CLASS_INDEX -> if (filipino) "Malusog na Dahon" else "Healthy Leaf"
+        ModelMetadata.HEALTHY_PLANT_CLASS_INDEX -> if (filipino) "Malusog na Halaman" else "Healthy Plant"
+        else -> error("Unknown healthy model class index: $classIndex")
+    }
 }
 
 private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String, default: T): T =

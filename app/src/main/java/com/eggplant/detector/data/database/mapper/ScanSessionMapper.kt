@@ -59,8 +59,11 @@ object ScanSessionMapper {
     }
 
     fun fromDomain(result: ScanResult): Pair<ScanSessionEntity, List<ScanDetectionEntity>> {
-        val persistedDetections = if (result.detections.isNotEmpty()) {
-            result.detections
+        val diseaseDetections = result.detections.filterNot { detection ->
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(detection.modelClassIndex)?.isHealthy == true
+        }
+        val persistedDetections = if (diseaseDetections.isNotEmpty()) {
+            diseaseDetections
         } else {
             val modelClass = ModelMetadata.EGGPLANT_YOLO26M.classes.firstOrNull {
                 it.diseaseId == result.diseaseId

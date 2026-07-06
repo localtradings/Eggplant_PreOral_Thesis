@@ -38,6 +38,9 @@ data class ModelMetadata(
     fun classFor(index: Int): ModelClass? = classes.getOrNull(index)
 
     companion object {
+        const val HEALTHY_LEAF_CLASS_INDEX = 2
+        const val HEALTHY_PLANT_CLASS_INDEX = 3
+
         val EGGPLANT_YOLO26M = ModelMetadata(
             modelVersion = "eggplant-yolo26m-b96-20260704",
             runtimeVersion = "ncnn-20260526",

@@ -3,18 +3,14 @@ package com.eggplant.detector.feature.result
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -39,22 +35,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import com.eggplant.detector.app.EggplantAppViewModel
 import com.eggplant.detector.R
 import com.eggplant.detector.app.SaveState
+import com.eggplant.detector.app.ResultWarning
 import com.eggplant.detector.core.ui.components.ConfidenceDisplay
 import com.eggplant.detector.core.ui.components.PrimaryButton
 import com.eggplant.detector.core.ui.components.ResultArtwork
 import com.eggplant.detector.domain.model.ScanResult
+import com.eggplant.detector.domain.model.ScanCategory
+import com.eggplant.detector.detection.api.DetectionBox
+import com.eggplant.detector.detection.api.DetectionStatus
+import com.eggplant.detector.detection.ncnn.ModelMetadata
+import com.eggplant.detector.feature.camera.CameraAnalysisState
+import com.eggplant.detector.feature.camera.DetectionOverlay
+import com.eggplant.detector.feature.camera.OverlayContentScale
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 @Composable
 fun DetectionResultScreen(
@@ -66,24 +67,34 @@ fun DetectionResultScreen(
 ) {
     val result by viewModel.currentResult.collectAsState()
     val saveState by viewModel.saveState.collectAsState()
+    val resultWarning by viewModel.resultWarning.collectAsState()
     ResultReport(
         result = result,
         title = title,
         onBack = onBack,
         actions = {
-            if (saveState == SaveState.FAILED) {
+            if (resultWarning == ResultWarning.SNAPSHOT_UNAVAILABLE) {
+                Text(
+                    stringResource(R.string.snapshot_unavailable_warning),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            if (saveState == SaveState.FAILED && result?.category != ScanCategory.NO_DISEASE_DETECTED) {
                 Text(
                     stringResource(R.string.save_history_failed),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            PrimaryButton(
-                text = if (saveState == SaveState.SAVING) stringResource(R.string.saving_history) else stringResource(R.string.save_history),
-                onClick = onSave,
-                icon = Icons.Outlined.CheckCircle,
-                enabled = saveState != SaveState.SAVING,
-            )
+            if (result?.category != ScanCategory.NO_DISEASE_DETECTED) {
+                PrimaryButton(
+                    text = if (saveState == SaveState.SAVING) stringResource(R.string.saving_history) else stringResource(R.string.save_history),
+                    onClick = onSave,
+                    icon = Icons.Outlined.CheckCircle,
+                    enabled = saveState != SaveState.SAVING,
+                )
+            }
             OutlinedButton(
                 onClick = onScanAgain,
                 modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -157,14 +168,24 @@ fun ResultReport(
                 ConfidenceDisplay(result.confidence)
             }
         }
-        ReportSection(stringResource(R.string.signs_detected), result.signs.joinToString("\n") { "• $it" })
-        if (result.detections.size > 1) {
+        if (result.category != ScanCategory.NO_DISEASE_DETECTED) {
+            ReportSection(stringResource(R.string.signs_detected), result.signs.joinToString("\n") { "• $it" })
+            if (result.detections.size > 1) {
+                ReportSection(
+                    localized("Also detected", "Natukoy rin"),
+                    result.detections.joinToString("\n") { "• ${it.name} — ${it.confidence}%" },
+                )
+            }
+            ReportSection(stringResource(R.string.recommended_action), result.treatment)
+        } else {
             ReportSection(
-                localized("Also detected", "Natukoy rin"),
-                result.detections.joinToString("\n") { "• ${it.name} — ${it.confidence}%" },
+                localized("Healthy result", "Malusog na resulta"),
+                localized(
+                    "No supported disease was detected in this confirmed healthy area. Healthy-only results are not saved to History.",
+                    "Walang suportadong sakit na nakita sa kumpirmadong malusog na bahaging ito. Hindi sine-save sa Kasaysayan ang healthy-only na resulta.",
+                ),
             )
         }
-        ReportSection(stringResource(R.string.recommended_action), result.treatment)
         Text(
             localized("On-device model result for educational screening only. Confirm crop concerns with a qualified agricultural specialist.", "Resulta ng on-device model para lamang sa paunang pagsusuri. Kumpirmahin sa kwalipikadong espesyalista ang problema sa pananim."),
             style = MaterialTheme.typography.bodyMedium,
@@ -186,33 +207,34 @@ private fun SnapshotPreview(result: ScanResult, modifier: Modifier = Modifier) {
         ResultArtwork(result.category, result.name, modifier, result.diseaseId)
         return
     }
-    BoxWithConstraints(modifier.background(Color.Black, RoundedCornerShape(24.dp))) {
+    Box(modifier.background(Color.Black, RoundedCornerShape(24.dp))) {
         Image(
             bitmap = snapshot.asImageBitmap(),
             contentDescription = localized("Saved scan snapshot", "Naka-save na larawan ng scan"),
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit,
         )
-        val density = LocalDensity.current
-        val viewWidth = with(density) { maxWidth.toPx() }
-        val viewHeight = with(density) { maxHeight.toPx() }
-        val scale = minOf(viewWidth / snapshot.width, viewHeight / snapshot.height)
-        val renderedWidth = snapshot.width * scale
-        val renderedHeight = snapshot.height * scale
-        val offsetX = (viewWidth - renderedWidth) / 2f
-        val offsetY = (viewHeight - renderedHeight) / 2f
-        result.detections.forEach { detection ->
-            val left = offsetX + detection.bounds.left * renderedWidth
-            val top = offsetY + detection.bounds.top * renderedHeight
-            val width = (detection.bounds.right - detection.bounds.left) * renderedWidth
-            val height = (detection.bounds.bottom - detection.bounds.top) * renderedHeight
-            Box(
-                Modifier
-                    .offset { IntOffset(left.roundToInt(), top.roundToInt()) }
-                    .size(with(density) { width.toDp() }, with(density) { height.toDp() })
-                    .border(3.dp, Color(0xFFFFB44C), RoundedCornerShape(10.dp)),
-            )
+        val overlayDetections = result.detections.mapNotNull { detection ->
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(detection.modelClassIndex)?.let { modelClass ->
+                DetectionBox(modelClass, detection.confidence / 100f, detection.bounds)
+            }
         }
+        DetectionOverlay(
+            state = CameraAnalysisState(
+                status = if (result.category == ScanCategory.NO_DISEASE_DETECTED) DetectionStatus.HEALTHY else DetectionStatus.DISEASE_DETECTED,
+                visibleDetections = overlayDetections,
+                stableDetections = overlayDetections.filterNot { it.modelClass.isHealthy },
+                confirmedDetections = overlayDetections,
+                frameWidth = snapshot.width,
+                frameHeight = snapshot.height,
+            ),
+            displayName = { detection ->
+                result.detections.firstOrNull { it.modelClassIndex == detection.modelClass.index }?.name
+                    ?: detection.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
+            },
+            onDetectionClick = null,
+            contentScale = OverlayContentScale.FIT,
+        )
     }
 }
 

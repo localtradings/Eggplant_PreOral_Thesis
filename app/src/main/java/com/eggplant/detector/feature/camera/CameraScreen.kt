@@ -17,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,9 +31,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.eggplant.detector.app.EggplantAppViewModel
 import com.eggplant.detector.R
 import com.eggplant.detector.detection.api.DetectionBox
+import com.eggplant.detector.detection.api.DetectionClassPolicy
 import com.eggplant.detector.detection.api.DetectionStatus
 import com.eggplant.detector.detection.api.InputSource
 import com.eggplant.detector.detection.ncnn.NcnnDetectionEngine
+import com.eggplant.detector.detection.ncnn.ModelMetadata
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun CameraScreen(
@@ -44,6 +50,11 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
+    val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
+    val detectHealthyPlantEnabled by viewModel.detectHealthyPlantEnabled.collectAsState()
+    val catalog by viewModel.catalog.collectAsState()
+    val healthyLeafName = stringResource(R.string.healthy_leaf_name)
+    val healthyPlantName = stringResource(R.string.healthy_plant_name)
     val galleryOpenFailed = stringResource(R.string.gallery_open_failed)
     val captureFailed = stringResource(R.string.capture_failed)
     val noSupportedDiseaseFound = stringResource(R.string.no_supported_disease_found)
@@ -71,6 +82,7 @@ fun CameraScreen(
 
     var cameraState by remember { mutableStateOf(CameraAnalysisState()) }
     var controller by remember { mutableStateOf<CameraController?>(null) }
+    val scope = rememberCoroutineScope()
     val previewView = remember {
         PreviewView(context).apply {
             scaleType = PreviewView.ScaleType.FILL_CENTER
@@ -92,46 +104,66 @@ fun CameraScreen(
         }
     }
 
+    LaunchedEffect(controller, detectHealthyLeafEnabled, detectHealthyPlantEnabled) {
+        controller?.updateClassPolicy(
+            DetectionClassPolicy(
+                detectHealthyLeaf = detectHealthyLeafEnabled,
+                detectHealthyPlant = detectHealthyPlantEnabled,
+            ),
+        )
+    }
+
     fun openScene(scene: CameraScene, primary: DetectionBox, afterReady: () -> Unit) {
         controller?.pauseAnalysis()
         viewModel.openDetectionScene(scene, primary, afterReady)
     }
 
     fun handleStillResult(result: Result<CameraScene>, fallbackError: String) {
+        cameraState = cameraState.copy(isStillImageProcessing = false)
         when (val outcome = result.toStillImageResult(fallbackError)) {
             is StillImageResult.Disease -> openScene(outcome.scene, outcome.primary, onResult)
-            is StillImageResult.Healthy -> {
-                cameraState = cameraState.copy(
-                    status = DetectionStatus.HEALTHY,
-                    visibleDetections = emptyList(),
-                    stableDetections = emptyList(),
-                    saveEligible = false,
-                    error = null,
-                )
-            }
+            is StillImageResult.Healthy -> openScene(outcome.scene, outcome.primary, onResult)
             is StillImageResult.NoMatch -> {
+                controller?.resumeAnalysis()
                 cameraState = cameraState.copy(
                     status = DetectionStatus.SEARCHING,
                     visibleDetections = emptyList(),
                     stableDetections = emptyList(),
+                    confirmedDetections = emptyList(),
                     saveEligible = false,
                     error = noSupportedDiseaseFound,
                 )
             }
-            is StillImageResult.Failure -> cameraState = cameraState.copy(error = outcome.message)
+            is StillImageResult.Failure -> {
+                controller?.resumeAnalysis()
+                cameraState = cameraState.copy(error = outcome.message)
+            }
         }
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            runCatching { context.decodeGalleryBitmap(uri) }
-                .onSuccess { bitmap ->
-                    controller?.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
-                        bitmap.recycle()
-                        handleStillResult(result, galleryOpenFailed)
-                    }
+        if (uri == null || cameraState.isStillImageProcessing) return@rememberLauncherForActivityResult
+        val activeController = controller
+        if (activeController == null) {
+            cameraState = cameraState.copy(error = galleryOpenFailed)
+            return@rememberLauncherForActivityResult
+        }
+        activeController.pauseAnalysis()
+        cameraState = cameraState.copy(isStillImageProcessing = true, error = null)
+        scope.launch {
+            val bitmap = runCatching { withContext(Dispatchers.IO) { context.decodeGalleryBitmap(uri) } }
+                .getOrElse { error ->
+                    activeController.resumeAnalysis()
+                    cameraState = cameraState.copy(
+                        isStillImageProcessing = false,
+                        error = error.message ?: galleryOpenFailed,
+                    )
+                    return@launch
                 }
-                .onFailure { cameraState = cameraState.copy(error = it.message ?: galleryOpenFailed) }
+            activeController.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
+                bitmap.recycle()
+                handleStillResult(result, galleryOpenFailed)
+            }
         }
     }
 
@@ -150,6 +182,15 @@ fun CameraScreen(
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
         DetectionOverlay(
             state = cameraState,
+            displayName = { detection ->
+                when (detection.modelClass.index) {
+                    ModelMetadata.HEALTHY_LEAF_CLASS_INDEX -> healthyLeafName
+                    ModelMetadata.HEALTHY_PLANT_CLASS_INDEX -> healthyPlantName
+                    else -> detection.modelClass.diseaseId?.let { diseaseId ->
+                        catalog.firstOrNull { it.id == diseaseId }?.name
+                    } ?: detection.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
+                }
+            },
             onDetectionClick = { selected ->
                 controller?.currentScene()?.let { scene -> openScene(scene, selected, onResult) }
             },
@@ -162,11 +203,16 @@ fun CameraScreen(
         CameraStatus(cameraState, Modifier.align(Alignment.TopCenter).padding(top = 82.dp))
         CameraBottomBar(
             saveEnabled = cameraState.saveEligible,
+            processing = cameraState.isStillImageProcessing,
             onGallery = {
                 galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onCapture = {
-                controller?.capturePhoto { result ->
+                val activeController = controller
+                if (activeController == null || cameraState.isStillImageProcessing) return@CameraBottomBar
+                activeController.pauseAnalysis()
+                cameraState = cameraState.copy(isStillImageProcessing = true, error = null)
+                activeController.capturePhoto { result ->
                     handleStillResult(result, captureFailed)
                 }
             },

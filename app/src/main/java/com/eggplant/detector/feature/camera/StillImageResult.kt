@@ -11,7 +11,10 @@ sealed interface StillImageResult {
         val primary: DetectionBox,
     ) : StillImageResult
 
-    data class Healthy(override val scene: CameraScene) : StillImageResult
+    data class Healthy(
+        override val scene: CameraScene,
+        val primary: DetectionBox,
+    ) : StillImageResult
 
     data class NoMatch(override val scene: CameraScene) : StillImageResult
 
@@ -22,10 +25,14 @@ sealed interface StillImageResult {
 
 fun Result<CameraScene>.toStillImageResult(fallbackError: String): StillImageResult = fold(
     onSuccess = { scene ->
-        val primary = scene.stability.stableDetections.maxByOrNull { it.confidence }
+        val primaryDisease = scene.stability.stableDetections.maxByOrNull { it.confidence }
+        val primaryHealthy = scene.stability.confirmedDetections
+            .filter { it.modelClass.isHealthy }
+            .maxByOrNull { it.confidence }
         when {
-            primary != null -> StillImageResult.Disease(scene, primary)
-            scene.stability.status == DetectionStatus.HEALTHY -> StillImageResult.Healthy(scene)
+            primaryDisease != null -> StillImageResult.Disease(scene, primaryDisease)
+            scene.stability.status == DetectionStatus.HEALTHY && primaryHealthy != null ->
+                StillImageResult.Healthy(scene, primaryHealthy)
             else -> StillImageResult.NoMatch(scene)
         }
     },
