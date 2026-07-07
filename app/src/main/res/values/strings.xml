@@ -117,8 +117,8 @@
     <string name="loading_model">Loading disease model…</string>
     <string name="detection_unavailable">Detection unavailable</string>
     <string name="no_disease_detected">No disease detected</string>
-    <string name="disease_detected_tap">Disease detected — tap a box for details</string>
-    <string name="point_camera">Point the camera at an eggplant leaf or fruit</string>
+    <string name="disease_detected_tap">Disease detected</string>
+    <string name="point_camera">Tap to capture. Hold the shutter for live preview.</string>
     <string name="save_scan">Save scan</string>
     <string name="camera_permission_required">Camera permission required</string>
     <string name="camera_permission_body">Camera access is needed for live disease detection.</string>
@@ -131,6 +131,10 @@
     <string name="detection_box_description">%1$s, confidence %2$d%%</string>
     <string name="analyzing">Analyzing…</string>
     <string name="analyzing_detection">Analyzing detection</string>
+    <string name="hold_for_live_preview">Hold for live preview</string>
+    <string name="live_preview_active">Live preview active — release to stop, then tap to capture.</string>
+    <string name="live_preview_disease">Live preview found a disease — release, then tap to capture.</string>
+    <string name="live_preview_healthy">Live preview looks healthy — release, then tap to capture if needed.</string>
     <string name="healthy_leaf_name">Healthy Leaf</string>
     <string name="healthy_plant_name">Healthy Plant</string>
 </resources>

@@ -1,36 +1,47 @@
-Eggplant Disease Detection - YOLO26m Training Result
-
-Model:
-- YOLO26m
-- Image size: 640
-- Epochs: 300
-- Batch: 96
-- GPUs: 3x RTX 5090
-- Training time: 6.781 hours
+Eggplant Disease Detection Training Export
 
 Dataset:
-- Total images: 24,927
-- Total boxes: 86,620
-- Classes: 10
+Roboflow final_eggplant_diseases version 3
+Cleaned for YOLO object detection
+Polygon labels converted to bounding boxes when present
 
-Overall validation:
-- Precision: 0.811
-- Recall: 0.742
-- mAP50: 0.764
-- mAP50-95: 0.463
+Classes:
+0 Fruit_Rot
+1 Fruit_borer
+2 Healthy Leaf
+3 Healthy Plant
+4 Insect-Pest
+5 Leaf-Spot
+6 Melon_Thrips
+7 Mosaic
+8 White-Mold
+9 Wilt
 
-Strong classes:
-- Healthy Plant
-- Insect-Pest
-- Healthy Leaf
-- Fruit_borer
-- Fruit_Rot
-- Mosaic
+Model:
+YOLO26m pretrained .pt fine-tuned on eggplant disease dataset
 
-Weak classes:
-- White-Mold
-- Leaf-Spot
-- Wilt
+Training:
+GPU=1x B200
+imgsz=768
+batch=128
+epochs=500
+patience=80
+early stopped at 188 epochs
+best epoch=108
+training time=6.465 hours
 
-Best model:
-weights/best.pt
+Validation:
+Precision=0.815
+Recall=0.755
+mAP50=0.804
+mAP50-95=0.452
+
+Weak class result:
+Leaf-Spot mAP50=0.537
+White-Mold mAP50=0.639
+Wilt mAP50=0.639
+
+Deployment plan:
+The external training archive retains best.pt as the master model.
+The repository packages only the approved NCNN param/bin pair for Android offline inference.
+The final Android app uses Kotlin + NCNN, has no Flask or network inference path, and now uses tap-to-capture analysis with hold-to-preview live assistance.

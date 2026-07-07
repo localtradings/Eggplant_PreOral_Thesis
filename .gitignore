@@ -9,7 +9,8 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
-# Local model-development workspace. Only ml/README.md is tracked;
-# the large checkpoints, exports, dataset pointers, and evaluation artifacts stay local.
+__pycache__/
+# Ignore newly generated model-development artifacts. The selected dataset
+# pointer and evaluation evidence already tracked under ml/ remain versioned.
 ml/*
 !ml/README.md

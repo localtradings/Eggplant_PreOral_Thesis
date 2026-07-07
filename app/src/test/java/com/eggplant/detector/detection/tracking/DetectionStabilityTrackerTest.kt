@@ -18,12 +18,11 @@ class DetectionStabilityTrackerTest {
     private val healthyLeaf = detection(classIndex = 2, confidence = 0.91f)
 
     @Test
-    fun `detection becomes stable only after three matching frames and 1250 milliseconds`() {
+    fun `detection becomes stable after two matching frames and 400 milliseconds`() {
         val tracker = DetectionStabilityTracker()
 
         assertFalse(tracker.update(frame(0, leafSpot)).stableDetections.isNotEmpty())
-        assertFalse(tracker.update(frame(700, leafSpot)).stableDetections.isNotEmpty())
-        val stable = tracker.update(frame(1_250, leafSpot))
+        val stable = tracker.update(frame(400, leafSpot))
 
         assertEquals(listOf("leaf-spot"), stable.stableDetections.mapNotNull { it.modelClass.diseaseId })
         assertEquals(DetectionStatus.DISEASE_DETECTED, stable.status)
@@ -33,12 +32,12 @@ class DetectionStabilityTrackerTest {
     @Test
     fun `low confidence and spatially unrelated boxes do not advance a track`() {
         val tracker = DetectionStabilityTracker()
-        val lowConfidence = leafSpot.copy(confidence = 0.49f)
+        val lowConfidence = leafSpot.copy(confidence = 0.10f)
         val moved = leafSpot.copy(bounds = NormalizedBox(0.65f, 0.1f, 0.95f, 0.4f))
 
         tracker.update(frame(0, leafSpot))
-        tracker.update(frame(700, lowConfidence))
-        val result = tracker.update(frame(1_400, moved))
+        tracker.update(frame(400, lowConfidence))
+        val result = tracker.update(frame(800, moved))
 
         assertTrue(result.stableDetections.isEmpty())
         assertEquals(DetectionStatus.SEARCHING, result.status)
@@ -49,8 +48,7 @@ class DetectionStabilityTrackerTest {
         val tracker = DetectionStabilityTracker()
 
         val tentative = tracker.update(frame(0, healthyLeaf))
-        tracker.update(frame(700, healthyLeaf))
-        val result = tracker.update(frame(1_250, healthyLeaf))
+        val result = tracker.update(frame(400, healthyLeaf))
 
         assertEquals(listOf(healthyLeaf), tentative.visibleDetections)
         assertTrue(tentative.confirmedDetections.isEmpty())
@@ -64,10 +62,10 @@ class DetectionStabilityTrackerTest {
     fun `reset clears a pending healthy track`() {
         val tracker = DetectionStabilityTracker()
         tracker.update(frame(0, healthyLeaf))
-        tracker.update(frame(700, healthyLeaf))
+        tracker.update(frame(400, healthyLeaf))
 
         tracker.reset()
-        val afterReset = tracker.update(frame(1_250, healthyLeaf))
+        val afterReset = tracker.update(frame(800, healthyLeaf))
 
         assertTrue(afterReset.confirmedDetections.isEmpty())
         assertEquals(DetectionStatus.SEARCHING, afterReset.status)
@@ -78,8 +76,7 @@ class DetectionStabilityTrackerTest {
         val tracker = DetectionStabilityTracker()
 
         tracker.update(frame(0, leafSpot, wilt))
-        tracker.update(frame(700, leafSpot, wilt))
-        val result = tracker.update(frame(1_250, leafSpot, wilt))
+        val result = tracker.update(frame(400, leafSpot, wilt))
 
         assertEquals(setOf("leaf-spot", "wilt"), result.stableDetections.mapNotNull { it.modelClass.diseaseId }.toSet())
         assertTrue(result.saveEligible)
@@ -92,20 +89,44 @@ class DetectionStabilityTrackerTest {
         val smallLightingChange = 0x1111111111111112L
         val differentScene = -0x1111111111111112L
         tracker.update(frame(0, leafSpot, sceneToken = firstScene))
-        tracker.update(frame(700, leafSpot, sceneToken = firstScene))
-        tracker.update(frame(1_250, leafSpot, sceneToken = firstScene))
+        tracker.update(frame(400, leafSpot, sceneToken = firstScene))
         tracker.markSaved()
 
-        assertFalse(tracker.update(frame(1_500, leafSpot, sceneToken = smallLightingChange)).saveEligible)
-        assertTrue(tracker.update(frame(1_600, leafSpot, sceneToken = differentScene)).saveEligible)
+        assertFalse(tracker.update(frame(500, leafSpot, sceneToken = smallLightingChange)).saveEligible)
+        assertTrue(tracker.update(frame(600, leafSpot, sceneToken = differentScene)).saveEligible)
 
         tracker.markSaved()
-        tracker.update(frame(2_000, sceneToken = differentScene))
-        assertFalse(tracker.update(frame(3_900, sceneToken = differentScene)).saveEligible)
-        tracker.update(frame(4_100, sceneToken = differentScene))
-        tracker.update(frame(4_800, leafSpot, sceneToken = differentScene))
-        tracker.update(frame(5_500, leafSpot, sceneToken = differentScene))
-        assertTrue(tracker.update(frame(6_050, leafSpot, sceneToken = differentScene)).saveEligible)
+        tracker.update(frame(900, sceneToken = differentScene))
+        assertFalse(tracker.update(frame(2_600, sceneToken = differentScene)).saveEligible)
+        tracker.update(frame(3_000, sceneToken = differentScene))
+        tracker.update(frame(3_600, leafSpot, sceneToken = differentScene))
+        assertTrue(tracker.update(frame(4_000, leafSpot, sceneToken = differentScene)).saveEligible)
+    }
+
+    @Test
+    fun `confirmed detections are held briefly after one missed frame`() {
+        val tracker = DetectionStabilityTracker()
+
+        tracker.update(frame(0, leafSpot))
+        tracker.update(frame(400, leafSpot))
+        val held = tracker.update(frame(700))
+
+        assertEquals(DetectionStatus.DISEASE_DETECTED, held.status)
+        assertEquals(listOf("leaf-spot"), held.confirmedDetections.mapNotNull { it.modelClass.diseaseId })
+        assertTrue(held.visibleDetections.isEmpty())
+    }
+
+    @Test
+    fun `confirmed detections expire after the hold window`() {
+        val tracker = DetectionStabilityTracker()
+
+        tracker.update(frame(0, leafSpot))
+        tracker.update(frame(400, leafSpot))
+        tracker.update(frame(700))
+        val expired = tracker.update(frame(1_200))
+
+        assertTrue(expired.confirmedDetections.isEmpty())
+        assertEquals(DetectionStatus.SEARCHING, expired.status)
     }
 
     private fun frame(

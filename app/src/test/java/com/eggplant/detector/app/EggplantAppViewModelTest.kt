@@ -9,6 +9,7 @@ import com.eggplant.detector.detection.ncnn.ModelMetadata
 import com.eggplant.detector.detection.api.NormalizedBox
 import com.eggplant.detector.detection.api.RgbFrame
 import com.eggplant.detector.detection.api.StabilityResult
+import com.eggplant.detector.domain.model.ScanOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertFalse
@@ -99,6 +100,7 @@ class EggplantAppViewModelTest {
         viewModel.openDetectionScene(scene, leafSpot)
 
         assertEquals("Leaf Spot", viewModel.currentResult.value?.name)
+        assertEquals(ScanOutcome.DISEASE, viewModel.currentResult.value?.outcome)
         assertEquals(listOf("leaf-spot", "wilt"), viewModel.currentResult.value?.detections?.map { it.diseaseId })
     }
 
@@ -126,6 +128,31 @@ class EggplantAppViewModelTest {
         viewModel.openDetectionScene(scene, healthyLeaf)
 
         assertEquals("Healthy Leaf", viewModel.currentResult.value?.name)
+        assertEquals(ScanOutcome.HEALTHY_CONFIRMED, viewModel.currentResult.value?.outcome)
+        assertEquals(com.eggplant.detector.domain.model.ScanCategory.NO_DISEASE_DETECTED, viewModel.currentResult.value?.category)
+        assertFalse(viewModel.saveCurrentResult())
+        assertTrue(viewModel.history.value.isEmpty())
+    }
+
+    @Test
+    fun `no match scene opens a result without enabling save`() {
+        val rgb = RgbFrame(2, 2, ByteArray(12), 10, InputSource.GALLERY, 1)
+        val scene = CameraScene(
+            rgb,
+            DetectionFrame(emptyList(), 10, 100, InputSource.GALLERY, 1),
+            StabilityResult(
+                status = DetectionStatus.SEARCHING,
+                stableDetections = emptyList(),
+                visibleDetections = emptyList(),
+                saveEligible = false,
+                confirmedDetections = emptyList(),
+            ),
+        )
+        val viewModel = EggplantAppViewModel(initialHistory = emptyList())
+
+        viewModel.openNoMatchScene(scene)
+
+        assertEquals(ScanOutcome.NO_MATCH, viewModel.currentResult.value?.outcome)
         assertEquals(com.eggplant.detector.domain.model.ScanCategory.NO_DISEASE_DETECTED, viewModel.currentResult.value?.category)
         assertFalse(viewModel.saveCurrentResult())
         assertTrue(viewModel.history.value.isEmpty())

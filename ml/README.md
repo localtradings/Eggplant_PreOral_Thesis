@@ -1,10 +1,8 @@
 # Machine Learning Workspace
 
-This folder contains local training and export artifacts. These files are not loaded directly by the Android application and are intentionally excluded from Git because of their size.
+This folder retains the approved model's dataset pointer and evaluation evidence. It does not contain runtime model binaries or PyTorch checkpoints.
 
-- `source-models/eggplant-yolo26m/` contains the original PyTorch checkpoints.
-- `exports/eggplant-yolo26m/ncnn-fp16/` contains the complete local NCNN export and smoke-test helper.
-- `evaluation/eggplant-yolo26m/` contains training metrics, plots, and the confusion matrix.
-- `dataset/eggplant-diseases/` contains the dataset configuration. The labeled image and label folders are not currently available in this repository.
+- `evaluation/eggplant-yolo26m/` contains the v3/768 training metrics, plots, and confusion matrix.
+- `dataset/eggplant-diseases/` contains the v3 dataset configuration. The labeled image and label folders are not included.
 
-The Android application loads only the deployment copy in `app/src/main/assets/models/eggplant-yolo26m/`.
+The Android application loads only the checksum-pinned NCNN pair in `app/src/main/assets/models/eggplant-yolo26m/`. Use `tools/model-export/export_ncnn.py` to validate and install an approved external NCNN export; the tool does not require PyTorch or Ultralytics. The runtime uses the v3 clean 768 model for tap-to-capture inference, with hold-to-preview live assistance only.

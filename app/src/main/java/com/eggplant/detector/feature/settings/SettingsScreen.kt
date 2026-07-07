@@ -18,7 +18,6 @@ import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.Yard
 import androidx.compose.material3.AlertDialog
@@ -56,7 +55,6 @@ fun SettingsScreen(
 ) {
     val theme by viewModel.themePreference.collectAsState()
     val language by viewModel.languagePreference.collectAsState()
-    val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
     val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
     val detectHealthyPlantEnabled by viewModel.detectHealthyPlantEnabled.collectAsState()
     var showLanguageDialog by remember { mutableStateOf(false) }
@@ -99,12 +97,6 @@ fun SettingsScreen(
             SettingsRow(stringResource(R.string.language), Icons.Outlined.Language, languageLabel(language)) { showLanguageDialog = true }
             HorizontalDivider()
             SettingsRow(stringResource(R.string.theme), Icons.Outlined.DarkMode, themeLabel(theme)) { showThemeDialog = true }
-            HorizontalDivider()
-            SettingsRow(
-                stringResource(R.string.history_saving),
-                Icons.Outlined.Save,
-                stringResource(if (autoSaveEnabled) R.string.automatic_save else R.string.manual_save),
-            ) { viewModel.setAutoSave(!autoSaveEnabled) }
             HorizontalDivider()
             SettingsSwitchRow(
                 title = stringResource(R.string.detect_healthy_leaf),

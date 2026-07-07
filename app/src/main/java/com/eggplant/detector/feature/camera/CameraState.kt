@@ -25,6 +25,7 @@ data class CameraAnalysisState(
     val frameHeight: Int = 0,
     val torchSupported: Boolean = false,
     val torchEnabled: Boolean = false,
+    val livePreviewActive: Boolean = false,
     val isStillImageProcessing: Boolean = false,
     val error: String? = null,
 )

@@ -5,8 +5,8 @@ The repository contains one Android application module. Runtime code and local m
 ## Top-Level Folders
 
 - `app/` — Android application source, resources, tests, Room schemas, native libraries, and packaged NCNN model.
-- `ml/` — local-only PyTorch checkpoints, dataset configuration, evaluation results, and complete NCNN exports. Only its README is committed.
-- `tools/model-export/` — the reproducible PyTorch-to-NCNN export utility.
+- `ml/` — dataset configuration and evaluation evidence; runtime models and source checkpoints do not live here.
+- `tools/model-export/` — the dependency-free validator/installer for an approved external NCNN export.
 - `docs/` — project documentation and UI reference images.
 - `gradle/` — Gradle wrapper and dependency configuration.
 
@@ -24,9 +24,9 @@ Android Kotlin source is under `app/src/main/java/com/eggplant/detector/`:
 - `detection/ncnn/` — model metadata, NCNN engine, JNI bridge contract, and native-result mapping.
 - `detection/tracking/` — multi-frame detection stability and scene deduplication.
 - `domain/model/` — app-level disease, navigation, and scan-result models.
-- `feature/` — camera, home, disease library, results, history, settings, notifications, and information screens.
+- `feature/` — still-capture camera flow with hold-to-preview live assistance, home, disease library, results, history, settings, notifications, and information screens.
 
-The C++ bridge is `app/src/main/cpp/detection/eggplant_ncnn_bridge.cpp`. The Android app loads only the checksum-verified files in `app/src/main/assets/models/eggplant-yolo26m/`.
+The C++ bridge is `app/src/main/cpp/detection/eggplant_ncnn_bridge.cpp`. The Android app loads only the checksum-verified 768×768 NCNN files in `app/src/main/assets/models/eggplant-yolo26m/`; input size and class count are passed to the native engine from the pinned Kotlin model metadata.
 
 ## Database
 

@@ -2,7 +2,9 @@ package com.eggplant.detector.feature.camera
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,21 +21,26 @@ import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
 import androidx.compose.material3.Button
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.eggplant.detector.R
 import com.eggplant.detector.detection.api.DetectionStatus
 import com.eggplant.detector.detection.api.EngineState
@@ -64,9 +71,10 @@ internal fun CameraStatus(state: CameraAnalysisState, modifier: Modifier = Modif
         state.engineState == EngineState.UNINITIALIZED -> stringResource(R.string.loading_model)
         state.engineState != EngineState.READY -> stringResource(R.string.detection_unavailable)
         state.isStillImageProcessing -> stringResource(R.string.analyzing)
-        state.visibleDetections.isNotEmpty() && state.confirmedDetections.isEmpty() -> stringResource(R.string.analyzing)
+        state.livePreviewActive && state.status == DetectionStatus.HEALTHY -> stringResource(R.string.live_preview_healthy)
+        state.livePreviewActive && state.status == DetectionStatus.DISEASE_DETECTED -> stringResource(R.string.live_preview_disease)
+        state.livePreviewActive -> stringResource(R.string.live_preview_active)
         state.status == DetectionStatus.HEALTHY -> stringResource(R.string.no_disease_detected)
-        state.status == DetectionStatus.DISEASE_DETECTED -> stringResource(R.string.disease_detected_tap)
         else -> stringResource(R.string.point_camera)
     }
     Surface(modifier = modifier.padding(horizontal = 24.dp), color = Color.Black.copy(alpha = .62f), shape = RoundedCornerShape(18.dp)) {
@@ -76,32 +84,70 @@ internal fun CameraStatus(state: CameraAnalysisState, modifier: Modifier = Modif
 
 @Composable
 internal fun CameraBottomBar(
-    saveEnabled: Boolean,
     processing: Boolean,
+    engineState: EngineState,
+    livePreviewActive: Boolean,
     onGallery: () -> Unit,
     onCapture: () -> Unit,
-    onSave: () -> Unit,
+    onStartLivePreview: () -> Unit,
+    onStopLivePreview: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val captureDescription = stringResource(R.string.capture_scan)
+    val livePreviewDescription = stringResource(R.string.hold_for_live_preview)
+    val shutterCoordinator = remember { ShutterActionCoordinator() }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    LaunchedEffect(isPressed) {
+        if (shutterCoordinator.onPressedChanged(isPressed) == ShutterAction.STOP_LIVE_PREVIEW) {
+            onStopLivePreview()
+        }
+    }
     Row(
         modifier = modifier.fillMaxWidth().background(Color.Black.copy(alpha = .55f)).padding(horizontal = 22.dp, vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        CameraControl(Icons.Outlined.Collections, stringResource(R.string.choose_gallery), onGallery, enabled = !processing)
-        FloatingActionButton(
-            onClick = { if (!processing) onCapture() },
-            modifier = Modifier.size(76.dp).semantics { contentDescription = captureDescription }.border(4.dp, Color.White.copy(alpha = .7f), CircleShape),
-            containerColor = Color.White,
-            contentColor = MaterialTheme.colorScheme.primary,
+        CameraControl(
+            Icons.Outlined.Collections,
+            stringResource(R.string.choose_gallery),
+            onGallery,
+            enabled = !processing && engineState == EngineState.READY && !livePreviewActive,
+        )
+        Surface(
+            modifier = Modifier
+                .size(76.dp)
+                .border(4.dp, Color.White.copy(alpha = .7f), CircleShape)
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    enabled = !processing && engineState == EngineState.READY,
+                    role = Role.Button,
+                    onClickLabel = captureDescription,
+                    onLongClickLabel = livePreviewDescription,
+                    onClick = {
+                        if (shutterCoordinator.onTap(processing, engineState) == ShutterAction.CAPTURE) {
+                            onCapture()
+                        }
+                    },
+                    onLongClick = {
+                        if (shutterCoordinator.onLongPress(processing, engineState) == ShutterAction.START_LIVE_PREVIEW) {
+                            onStartLivePreview()
+                        }
+                    },
+                )
+                .semantics {
+                    contentDescription = captureDescription
+                },
+            color = if (livePreviewActive) MaterialTheme.colorScheme.primary else Color.White,
+            contentColor = if (livePreviewActive) Color.White else MaterialTheme.colorScheme.primary,
             shape = CircleShape,
         ) {
-            Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(34.dp))
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(34.dp))
+            }
         }
-        Button(onClick = onSave, enabled = saveEnabled && !processing, shape = RoundedCornerShape(16.dp)) {
-            Text(stringResource(R.string.save_scan))
-        }
+        Spacer(Modifier.size(52.dp))
     }
 }
 

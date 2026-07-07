@@ -48,6 +48,8 @@ class NcnnDetectionEngine(
                         sharedNativeHandle = bridge.create(
                             paramPath = param.absolutePath,
                             binPath = weights.absolutePath,
+                            inputSize = metadata.inputSize,
+                            classCount = metadata.classes.size,
                             useVulkan = useVulkan,
                         )
                     }
@@ -57,6 +59,8 @@ class NcnnDetectionEngine(
                 bridge.create(
                     paramPath = param.absolutePath,
                     binPath = weights.absolutePath,
+                    inputSize = metadata.inputSize,
+                    classCount = metadata.classes.size,
                     useVulkan = useVulkan,
                 )
             }

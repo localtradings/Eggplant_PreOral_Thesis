@@ -1,8 +1,8 @@
 # Eggplant Disease Detector
 
-An offline Android application for live identification of common eggplant leaf and fruit diseases using CameraX, a custom YOLO26m export, and NCNN.
+An offline Android application for tap-to-capture eggplant disease screening with hold-to-preview live assistance, CameraX, a custom YOLO26m NCNN export, and on-device inference.
 
-The app performs live on-device inference, draws tappable confidence boxes, analyzes shutter and Gallery images, supports torch control, and saves grouped detections only when manual or automatic saving is selected. Saved snapshots and records remain private on the phone.
+The app uses the center shutter in two modes: tap once to capture and analyze a still image, or hold to preview live detections while framing the subject. Gallery images, captured photos, grouped disease results, and saved snapshots remain private on the phone. Saving happens manually from the Result screen.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ The release task currently signs a local thesis-demo APK with the standard debug
 - English and Filipino (Tagalog) application localization
 - System default, light, and dark themes
 - On-device Room/SQLite persistence for the localized disease catalog, grouped scan history, settings, and notification read state
-- Manual save by default, with optional scene-deduplicated automatic saving
+- Manual save from the Result screen only
 - Independent, default-off Healthy Leaf and Healthy Plant detection controls
 - Offline-only runtime with no account, backend, synchronization, analytics, advertisements, payments, or Internet permission
 
@@ -45,9 +45,9 @@ Database rows retain stable disease IDs and grouped detections:
 - timestamp
 - model version
 
-The packaged FP16 NCNN model is checksum-verified before loading. Live analysis uses latest-frame backpressure and stability requires three matching frames over at least 1.25 seconds.
+The packaged FP16 NCNN model is checksum-verified before loading. Live preview uses latest-frame backpressure and confirms boxes after two matching frames over at least 400 ms, with a brief 750 ms hold to reduce flicker while framing.
 
-Version 1.1 calibrates the confidence threshold to `0.20` for the exported NCNN score distribution, makes Gallery/capture no-match and failure states visible, uses a 640×480 upright analysis stream, and defaults to CPU inference for consistent mobile behavior. These runtime changes do not replace or retrain the accepted YOLO26m weights.
+The current runtime uses a `0.15` confidence threshold for the exported NCNN score distribution, keeps Gallery/capture no-match states visible on the Result screen, uses a preferred 1024×768 upright live-analysis stream and 1280×960 still capture stream, preprocesses frames for the approved 768×768 model input, and defaults to CPU inference for consistent mobile behavior.
 
 ## Validation Boundary
 

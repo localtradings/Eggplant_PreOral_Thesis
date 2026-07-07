@@ -8,9 +8,10 @@ import com.eggplant.detector.detection.ncnn.ModelMetadata
 
 class DetectionStabilityTracker(
     private val metadata: ModelMetadata = ModelMetadata.EGGPLANT_YOLO26M,
-    private val minimumFrames: Int = 3,
-    private val minimumStableMillis: Long = 1_250,
-    private val minimumIoU: Float = 0.5f,
+    private val minimumFrames: Int = 2,
+    private val minimumStableMillis: Long = 400,
+    private val minimumIoU: Float = 0.3f,
+    private val confirmedHoldMillis: Long = 750,
     private val sceneResetMillis: Long = 2_000,
 ) {
     private data class Track(
@@ -26,6 +27,8 @@ class DetectionStabilityTracker(
     private var currentSceneToken: Long? = null
     private var lastDiseaseSeenAt: Long? = null
     private var currentStableDiseases: List<DetectionBox> = emptyList()
+    private var lastConfirmedAt: Long? = null
+    private var lastConfirmedDetections: List<DetectionBox> = emptyList()
 
     fun update(frame: DetectionFrame): StabilityResult {
         val visible = frame.detections.filter { it.confidence >= metadata.confidenceThreshold }
@@ -53,7 +56,6 @@ class DetectionStabilityTracker(
                 track.lastSeenAt - track.firstSeenAt >= minimumStableMillis
         }.map(Track::detection)
         val stableDiseases = stable.filterNot { it.modelClass.isHealthy }
-        val stableHealthy = stable.any { it.modelClass.isHealthy }
 
         if (visible.any { !it.modelClass.isHealthy }) {
             lastDiseaseSeenAt = frame.timestampMillis
@@ -72,9 +74,28 @@ class DetectionStabilityTracker(
 
         currentSceneToken = frame.sceneToken
         currentStableDiseases = stableDiseases
+        if (stable.isNotEmpty()) {
+            lastConfirmedAt = frame.timestampMillis
+            lastConfirmedDetections = stable
+        }
+        val confirmed = when {
+            stable.isNotEmpty() -> stable
+            lastConfirmedDetections.isNotEmpty() &&
+                lastConfirmedAt != null &&
+                frame.timestampMillis - requireNotNull(lastConfirmedAt) <= confirmedHoldMillis -> {
+                lastConfirmedDetections
+            }
+            else -> {
+                lastConfirmedAt = null
+                lastConfirmedDetections = emptyList()
+                emptyList()
+            }
+        }
+        val confirmedDiseases = confirmed.filterNot { it.modelClass.isHealthy }
+        val confirmedHealthy = confirmed.any { it.modelClass.isHealthy }
         val status = when {
-            stableDiseases.isNotEmpty() -> DetectionStatus.DISEASE_DETECTED
-            stableHealthy -> DetectionStatus.HEALTHY
+            confirmedDiseases.isNotEmpty() -> DetectionStatus.DISEASE_DETECTED
+            confirmedHealthy -> DetectionStatus.HEALTHY
             else -> DetectionStatus.SEARCHING
         }
         return StabilityResult(
@@ -82,7 +103,7 @@ class DetectionStabilityTracker(
             stableDetections = stableDiseases,
             visibleDetections = visible,
             saveEligible = saveArmed && stableDiseases.isNotEmpty(),
-            confirmedDetections = stable,
+            confirmedDetections = confirmed,
         )
     }
 
@@ -100,6 +121,8 @@ class DetectionStabilityTracker(
         currentSceneToken = null
         lastDiseaseSeenAt = null
         currentStableDiseases = emptyList()
+        lastConfirmedAt = null
+        lastConfirmedDetections = emptyList()
     }
 
     private fun sceneDistance(first: Long, second: Long): Int {

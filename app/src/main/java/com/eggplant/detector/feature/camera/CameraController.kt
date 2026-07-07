@@ -42,7 +42,7 @@ class CameraController(
     private var camera: Camera? = null
     private var imageAnalysis: ImageAnalysis? = null
     private var imageCapture: ImageCapture? = null
-    @Volatile private var paused = false
+    @Volatile private var paused = true
     @Volatile private var classPolicy = DetectionClassPolicy()
     @Volatile private var latestScene: CameraScene? = null
     @Volatile private var state = CameraAnalysisState()
@@ -71,15 +71,50 @@ class CameraController(
         }
     }
 
-    fun pauseAnalysis() {
+    private fun pauseAnalysis() {
         paused = true
     }
 
-    fun resumeAnalysis() {
+    private fun resumeAnalysis() {
         paused = false
     }
 
     fun currentScene(): CameraScene? = latestScene
+
+    fun startLivePreview() {
+        if (engine.state != EngineState.READY) return
+        resumeAnalysis()
+        tracker.reset()
+        latestScene = null
+        emit(
+            state.copy(
+                livePreviewActive = true,
+                status = DetectionStatus.SEARCHING,
+                visibleDetections = emptyList(),
+                stableDetections = emptyList(),
+                confirmedDetections = emptyList(),
+                saveEligible = false,
+                error = null,
+            ),
+        )
+    }
+
+    fun stopLivePreview() {
+        pauseAnalysis()
+        tracker.reset()
+        latestScene = null
+        emit(
+            state.copy(
+                livePreviewActive = false,
+                status = DetectionStatus.SEARCHING,
+                visibleDetections = emptyList(),
+                stableDetections = emptyList(),
+                confirmedDetections = emptyList(),
+                saveEligible = false,
+                error = null,
+            ),
+        )
+    }
 
     fun updateClassPolicy(policy: DetectionClassPolicy) {
         if (classPolicy == policy) return
@@ -163,7 +198,7 @@ class CameraController(
         val analysisResolutionSelector = ResolutionSelector.Builder()
             .setResolutionStrategy(
                 ResolutionStrategy(
-                    Size(640, 480),
+                    Size(1024, 768),
                     ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
                 ),
             )
@@ -171,7 +206,7 @@ class CameraController(
         val captureResolutionSelector = ResolutionSelector.Builder()
             .setResolutionStrategy(
                 ResolutionStrategy(
-                    Size(1280, 720),
+                    Size(1280, 960),
                     ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
                 ),
             )
@@ -201,7 +236,7 @@ class CameraController(
         imageAnalysis = analysis
         imageCapture = capture
         val supportsTorch = camera?.cameraInfo?.hasFlashUnit() == true
-        emit(state.copy(torchSupported = supportsTorch, torchEnabled = false, error = null))
+        emit(state.copy(torchSupported = supportsTorch, torchEnabled = false, livePreviewActive = false, error = null))
     }
 
     private fun analyzeImage(image: ImageProxy) {
@@ -240,6 +275,7 @@ class CameraController(
                     inferenceMillis = detection.inferenceMillis,
                     frameWidth = rotated.width,
                     frameHeight = rotated.height,
+                    livePreviewActive = true,
                     error = null,
                 ),
             )
@@ -323,6 +359,7 @@ class CameraController(
                 inferenceMillis = scene.detectionFrame.inferenceMillis,
                 frameWidth = scene.rgbFrame.width,
                 frameHeight = scene.rgbFrame.height,
+                livePreviewActive = false,
                 error = null,
             ),
         )

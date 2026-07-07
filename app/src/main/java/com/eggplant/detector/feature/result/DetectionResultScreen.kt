@@ -45,6 +45,7 @@ import com.eggplant.detector.app.ResultWarning
 import com.eggplant.detector.core.ui.components.ConfidenceDisplay
 import com.eggplant.detector.core.ui.components.PrimaryButton
 import com.eggplant.detector.core.ui.components.ResultArtwork
+import com.eggplant.detector.domain.model.ScanOutcome
 import com.eggplant.detector.domain.model.ScanResult
 import com.eggplant.detector.domain.model.ScanCategory
 import com.eggplant.detector.detection.api.DetectionBox
@@ -80,14 +81,14 @@ fun DetectionResultScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            if (saveState == SaveState.FAILED && result?.category != ScanCategory.NO_DISEASE_DETECTED) {
+            if (saveState == SaveState.FAILED && result?.outcome == ScanOutcome.DISEASE) {
                 Text(
                     stringResource(R.string.save_history_failed),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            if (result?.category != ScanCategory.NO_DISEASE_DETECTED) {
+            if (result?.outcome == ScanOutcome.DISEASE) {
                 PrimaryButton(
                     text = if (saveState == SaveState.SAVING) stringResource(R.string.saving_history) else stringResource(R.string.save_history),
                     onClick = onSave,
@@ -168,23 +169,35 @@ fun ResultReport(
                 ConfidenceDisplay(result.confidence)
             }
         }
-        if (result.category != ScanCategory.NO_DISEASE_DETECTED) {
-            ReportSection(stringResource(R.string.signs_detected), result.signs.joinToString("\n") { "• $it" })
-            if (result.detections.size > 1) {
+        when (result.outcome) {
+            ScanOutcome.DISEASE -> {
+                ReportSection(stringResource(R.string.signs_detected), result.signs.joinToString("\n") { "• $it" })
+                if (result.detections.size > 1) {
+                    ReportSection(
+                        localized("Also detected", "Natukoy rin"),
+                        result.detections.joinToString("\n") { "• ${it.name} — ${it.confidence}%" },
+                    )
+                }
+                ReportSection(stringResource(R.string.recommended_action), result.treatment)
+            }
+            ScanOutcome.HEALTHY_CONFIRMED -> {
                 ReportSection(
-                    localized("Also detected", "Natukoy rin"),
-                    result.detections.joinToString("\n") { "• ${it.name} — ${it.confidence}%" },
+                    localized("Healthy result", "Malusog na resulta"),
+                    localized(
+                        "No supported disease was detected in this confirmed healthy area. Healthy-only results are not saved to History.",
+                        "Walang suportadong sakit na nakita sa kumpirmadong malusog na bahaging ito. Hindi sine-save sa Kasaysayan ang healthy-only na resulta.",
+                    ),
                 )
             }
-            ReportSection(stringResource(R.string.recommended_action), result.treatment)
-        } else {
-            ReportSection(
-                localized("Healthy result", "Malusog na resulta"),
-                localized(
-                    "No supported disease was detected in this confirmed healthy area. Healthy-only results are not saved to History.",
-                    "Walang suportadong sakit na nakita sa kumpirmadong malusog na bahaging ito. Hindi sine-save sa Kasaysayan ang healthy-only na resulta.",
-                ),
-            )
+            ScanOutcome.NO_MATCH -> {
+                ReportSection(
+                    localized("No supported disease detected", "Walang suportadong sakit na natukoy"),
+                    localized(
+                        "The selected image loaded correctly, but the packaged detector did not confirm a supported eggplant disease. Try a closer, brighter, steadier photo.",
+                        "Nabuksan nang tama ang napiling larawan, pero walang nakumpirmang suportadong sakit ng talong ang detector. Subukan ang mas malapit, mas maliwanag, at mas matatag na larawan.",
+                    ),
+                )
+            }
         }
         Text(
             localized("On-device model result for educational screening only. Confirm crop concerns with a qualified agricultural specialist.", "Resulta ng on-device model para lamang sa paunang pagsusuri. Kumpirmahin sa kwalipikadong espesyalista ang problema sa pananim."),
@@ -221,7 +234,11 @@ private fun SnapshotPreview(result: ScanResult, modifier: Modifier = Modifier) {
         }
         DetectionOverlay(
             state = CameraAnalysisState(
-                status = if (result.category == ScanCategory.NO_DISEASE_DETECTED) DetectionStatus.HEALTHY else DetectionStatus.DISEASE_DETECTED,
+                status = when (result.outcome) {
+                    ScanOutcome.DISEASE -> DetectionStatus.DISEASE_DETECTED
+                    ScanOutcome.HEALTHY_CONFIRMED -> DetectionStatus.HEALTHY
+                    ScanOutcome.NO_MATCH -> DetectionStatus.SEARCHING
+                },
                 visibleDetections = overlayDetections,
                 stableDetections = overlayDetections.filterNot { it.modelClass.isHealthy },
                 confirmedDetections = overlayDetections,

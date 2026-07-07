@@ -15,8 +15,6 @@
 
 namespace {
 
-constexpr int kInputSize = 640;
-constexpr int kClassCount = 10;
 constexpr float kNmsThreshold = 0.45f;
 constexpr int kMaxDetections = 100;
 
@@ -31,6 +29,8 @@ struct Proposal {
 
 struct Engine {
     ncnn::Net net;
+    int input_size;
+    int class_count;
 };
 
 std::mutex gpu_mutex;
@@ -78,9 +78,14 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_create(
     jobject,
     jstring param_path,
     jstring bin_path,
+    jint input_size,
+    jint class_count,
     jboolean use_vulkan
 ) {
+    if (input_size <= 0 || class_count <= 0) return 0;
     auto* engine = new Engine();
+    engine->input_size = input_size;
+    engine->class_count = class_count;
     if (use_vulkan == JNI_TRUE) ensure_gpu_instance();
     engine->net.opt.use_vulkan_compute = use_vulkan == JNI_TRUE && ncnn::get_gpu_count() > 0;
     engine->net.opt.num_threads = std::max(1, ncnn::get_big_cpu_count());
@@ -116,8 +121,8 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     if (pixels == nullptr) return env->NewFloatArray(0);
 
     const float scale = std::min(
-        static_cast<float>(kInputSize) / static_cast<float>(width),
-        static_cast<float>(kInputSize) / static_cast<float>(height)
+        static_cast<float>(engine->input_size) / static_cast<float>(width),
+        static_cast<float>(engine->input_size) / static_cast<float>(height)
     );
     const int resized_width = std::max(1, static_cast<int>(std::round(width * scale)));
     const int resized_height = std::max(1, static_cast<int>(std::round(height * scale)));
@@ -131,10 +136,10 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     );
     env->ReleaseByteArrayElements(rgb_bytes, reinterpret_cast<jbyte*>(pixels), JNI_ABORT);
 
-    const int pad_left = (kInputSize - resized_width) / 2;
-    const int pad_right = kInputSize - resized_width - pad_left;
-    const int pad_top = (kInputSize - resized_height) / 2;
-    const int pad_bottom = kInputSize - resized_height - pad_top;
+    const int pad_left = (engine->input_size - resized_width) / 2;
+    const int pad_right = engine->input_size - resized_width - pad_left;
+    const int pad_top = (engine->input_size - resized_height) / 2;
+    const int pad_bottom = engine->input_size - resized_height - pad_top;
     ncnn::Mat input;
     ncnn::copy_make_border(
         resized,
@@ -152,7 +157,7 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     ncnn::Extractor extractor = engine->net.create_extractor();
     extractor.input("in0", input);
     ncnn::Mat output;
-    if (extractor.extract("out0", output) != 0 || output.h != 4 + kClassCount) {
+    if (extractor.extract("out0", output) != 0 || output.h != 4 + engine->class_count) {
         return env->NewFloatArray(0);
     }
 
@@ -161,7 +166,7 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     for (int candidate = 0; candidate < output.w; ++candidate) {
         int best_class = -1;
         float best_confidence = confidence_threshold;
-        for (int class_index = 0; class_index < kClassCount; ++class_index) {
+        for (int class_index = 0; class_index < engine->class_count; ++class_index) {
             const float confidence = output.row(4 + class_index)[candidate];
             if (confidence > best_confidence) {
                 best_confidence = confidence;

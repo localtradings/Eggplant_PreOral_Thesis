@@ -12,6 +12,7 @@ import com.eggplant.detector.detection.ncnn.ModelMetadata
 import com.eggplant.detector.domain.model.DiseaseType
 import com.eggplant.detector.domain.model.ScanCategory
 import com.eggplant.detector.domain.model.ScanDetectionResult
+import com.eggplant.detector.domain.model.ScanOutcome
 import com.eggplant.detector.domain.model.ScanResult
 import java.time.LocalDateTime
 import java.util.UUID
@@ -170,6 +171,38 @@ class EggplantAppViewModel(
         _currentResult.value = result
     }
 
+    fun openNoMatchScene(
+        scene: CameraScene,
+        onReady: () -> Unit = {},
+    ) {
+        _saveState.value = SaveState.IDLE
+        _resultWarning.value = null
+        val localRepository = repository
+        val stageSnapshot = snapshotStager ?: localRepository?.let { repo ->
+            suspend { frame: com.eggplant.detector.detection.api.RgbFrame -> repo.stageSnapshot(frame) }
+        }
+        if (stageSnapshot == null) {
+            _currentResult.value = scene.toNoMatchScanResult(
+                imagePath = null,
+                timestamp = nowProvider(),
+                languageTag = _languagePreference.value.languageTag,
+            )
+            onReady()
+            return
+        }
+        viewModelScope.launch {
+            val imagePath = runCatching { stageSnapshot(scene.rgbFrame) }
+                .onFailure { _resultWarning.value = ResultWarning.SNAPSHOT_UNAVAILABLE }
+                .getOrNull()
+            _currentResult.value = scene.toNoMatchScanResult(
+                imagePath = imagePath,
+                timestamp = nowProvider(),
+                languageTag = _languagePreference.value.languageTag,
+            )
+            onReady()
+        }
+    }
+
     fun saveCurrentResult(onComplete: (Boolean) -> Unit = {}): Boolean {
         val result = _currentResult.value
         if (
@@ -301,6 +334,7 @@ private fun CameraScene.toScanResult(
             DiseaseType.FRUIT_DISEASE -> ScanCategory.FRUIT_DISEASE
             null -> ScanCategory.NO_DISEASE_DETECTED
         },
+        outcome = if (primary.modelClass.isHealthy) ScanOutcome.HEALTHY_CONFIRMED else ScanOutcome.DISEASE,
         confidence = (primary.confidence * 100).roundToInt().coerceIn(0, 100),
         scannedAt = timestamp,
         signs = primaryDisease?.signs.orEmpty(),
@@ -329,6 +363,30 @@ private fun CameraScene.toScanResult(
         },
     )
 }
+
+private fun CameraScene.toNoMatchScanResult(
+    imagePath: String?,
+    timestamp: LocalDateTime,
+    languageTag: String,
+): ScanResult = ScanResult(
+    id = UUID.randomUUID().toString(),
+    name = if (languageTag in setOf("fil", "tl")) {
+        "Walang suportadong sakit na natukoy"
+    } else {
+        "No supported disease detected"
+    },
+    category = ScanCategory.NO_DISEASE_DETECTED,
+    outcome = ScanOutcome.NO_MATCH,
+    confidence = 0,
+    scannedAt = timestamp,
+    signs = emptyList(),
+    treatment = "",
+    diseaseId = "no-match",
+    source = rgbFrame.source.name.lowercase(),
+    modelVersion = ModelMetadata.EGGPLANT_YOLO26M.modelVersion,
+    imagePath = imagePath,
+    detections = emptyList(),
+)
 
 private fun healthyClassId(classIndex: Int): String = when (classIndex) {
     ModelMetadata.HEALTHY_LEAF_CLASS_INDEX -> "healthy-leaf"

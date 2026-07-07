@@ -1,6 +1,8 @@
 package com.eggplant.detector.app
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -11,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.platform.app.InstrumentationRegistry
+import com.eggplant.detector.R
 import com.eggplant.detector.feature.camera.CameraScene
 import com.eggplant.detector.detection.api.DetectionBox
 import com.eggplant.detector.detection.api.DetectionFrame
@@ -84,13 +87,17 @@ class AppFlowTest {
 
     @Test
     fun healthyDetectionSwitchesAreIndependentAndDefaultOff() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val leafLabel = context.getString(R.string.detect_healthy_leaf)
+        val plantLabel = context.getString(R.string.detect_healthy_plant)
+
         composeRule.onNodeWithContentDescription("Navigate to Settings").performClick()
 
-        composeRule.onNodeWithText("Detect Healthy Leaf").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Detect Healthy Plant").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Detect Healthy Leaf, off").performScrollTo().performClick()
-        composeRule.onNodeWithContentDescription("Detect Healthy Leaf, on").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Detect Healthy Plant, off").assertIsDisplayed()
+        composeRule.onNodeWithText(leafLabel).performScrollTo().assertIsDisplayed().assertIsOff()
+        composeRule.onNodeWithText(plantLabel).performScrollTo().assertIsDisplayed().assertIsOff()
+        composeRule.onNodeWithText(leafLabel).performScrollTo().performClick()
+        composeRule.onNodeWithText(leafLabel).assertIsOn()
+        composeRule.onNodeWithText(plantLabel).assertIsOff()
     }
 
     @Test

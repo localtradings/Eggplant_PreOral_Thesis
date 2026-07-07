@@ -18,19 +18,16 @@ internal fun presentOverlayDetections(
     visible: List<DetectionBox>,
     confirmed: List<DetectionBox>,
     displayName: (DetectionBox) -> String,
-): List<OverlayDetection> = visible.map { detection ->
-    val isConfirmed = confirmed.any { stable ->
-        stable.modelClass.index == detection.modelClass.index &&
-            stable.bounds.intersectionOverUnion(detection.bounds) >= CONFIRMED_MINIMUM_IOU
+): List<OverlayDetection> = confirmed.filter { detection ->
+    visible.isEmpty() || visible.any { candidate ->
+        candidate.modelClass.index == detection.modelClass.index &&
+            candidate.bounds.intersectionOverUnion(detection.bounds) >= CONFIRMED_MINIMUM_IOU
     }
+}.map { detection ->
     OverlayDetection(
         detection = detection,
-        phase = if (isConfirmed) OverlayPhase.CONFIRMED else OverlayPhase.TENTATIVE,
-        label = if (isConfirmed) {
-            "${displayName(detection)} · ${(detection.confidence * 100).roundToInt()}%"
-        } else {
-            null
-        },
+        phase = OverlayPhase.CONFIRMED,
+        label = "${displayName(detection)} · ${(detection.confidence * 100).roundToInt()}%",
     )
 }
 

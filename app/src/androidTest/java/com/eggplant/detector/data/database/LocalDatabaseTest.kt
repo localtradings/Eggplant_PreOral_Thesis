@@ -92,7 +92,7 @@ class LocalDatabaseTest {
                 startedAt = "2026-07-04T10:00:00",
                 savedAt = "2026-07-04T10:00:02",
                 imagePath = "/private/session-1.jpg",
-                modelVersion = "eggplant-yolo26m-b96-20260704",
+                modelVersion = "eggplant-yolo26m-v3-clean-768-20260707",
                 saveMode = "MANUAL",
             ),
             listOf(

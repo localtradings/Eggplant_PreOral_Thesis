@@ -9,6 +9,7 @@ import com.eggplant.detector.detection.ncnn.ModelMetadata
 import com.eggplant.detector.domain.model.DiseaseType
 import com.eggplant.detector.domain.model.ScanCategory
 import com.eggplant.detector.domain.model.ScanDetectionResult
+import com.eggplant.detector.domain.model.ScanOutcome
 import com.eggplant.detector.domain.model.ScanResult
 import java.time.LocalDateTime
 import java.util.UUID
@@ -45,6 +46,11 @@ object ScanSessionMapper {
             id = row.session.id,
             name = primaryDisease?.name ?: "Healthy",
             category = category,
+            outcome = if (category == ScanCategory.NO_DISEASE_DETECTED) {
+                ScanOutcome.HEALTHY_CONFIRMED
+            } else {
+                ScanOutcome.DISEASE
+            },
             confidence = primaryDetection?.confidence ?: 0,
             scannedAt = LocalDateTime.parse(row.session.savedAt),
             signs = primaryDisease?.signs.orEmpty(),

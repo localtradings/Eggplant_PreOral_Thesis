@@ -11,9 +11,18 @@ class ModelMetadataTest {
     fun `deployment metadata preserves exact training label order`() {
         val metadata = ModelMetadata.EGGPLANT_YOLO26M
 
-        assertEquals(640, metadata.inputSize)
-        assertEquals(0.2f, metadata.confidenceThreshold)
+        assertEquals("eggplant-yolo26m-v3-clean-768-20260707", metadata.modelVersion)
+        assertEquals(768, metadata.inputSize)
+        assertEquals(0.15f, metadata.confidenceThreshold)
         assertEquals("ncnn-20260526", metadata.runtimeVersion)
+        assertEquals(
+            "8f5eb9a0e6c01a45a1b68333b72f868a38fd24e451fb0fcd862b11e337881289",
+            metadata.paramSha256,
+        )
+        assertEquals(
+            "d6cd0a038cdd16e1d8bb3c44fa2b18043636c51f0b59446df9ce176cb39a5239",
+            metadata.binSha256,
+        )
         assertEquals(
             listOf(
                 "Fruit_Rot",

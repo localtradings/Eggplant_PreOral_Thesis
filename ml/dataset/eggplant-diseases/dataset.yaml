@@ -1,4 +1,4 @@
-path: /workspace/eggplant_disease_yolo/final_eggplant_diseases-1-detect-clean
+path: /workspace/eggplant_disease_yolo/final_eggplant_diseases-3-detect-clean
 train: train/images
 val: valid/images
 test: test/images

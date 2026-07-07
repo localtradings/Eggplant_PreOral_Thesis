@@ -32,10 +32,10 @@ import com.eggplant.detector.app.EggplantAppViewModel
 import com.eggplant.detector.R
 import com.eggplant.detector.detection.api.DetectionBox
 import com.eggplant.detector.detection.api.DetectionClassPolicy
-import com.eggplant.detector.detection.api.DetectionStatus
+import com.eggplant.detector.detection.api.EngineState
 import com.eggplant.detector.detection.api.InputSource
-import com.eggplant.detector.detection.ncnn.NcnnDetectionEngine
 import com.eggplant.detector.detection.ncnn.ModelMetadata
+import com.eggplant.detector.detection.ncnn.NcnnDetectionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,11 +45,9 @@ fun CameraScreen(
     viewModel: EggplantAppViewModel,
     onBack: () -> Unit,
     onResult: () -> Unit,
-    onSaved: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
     val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
     val detectHealthyPlantEnabled by viewModel.detectHealthyPlantEnabled.collectAsState()
     val catalog by viewModel.catalog.collectAsState()
@@ -57,7 +55,6 @@ fun CameraScreen(
     val healthyPlantName = stringResource(R.string.healthy_plant_name)
     val galleryOpenFailed = stringResource(R.string.gallery_open_failed)
     val captureFailed = stringResource(R.string.capture_failed)
-    val noSupportedDiseaseFound = stringResource(R.string.no_supported_disease_found)
     var cameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
@@ -114,7 +111,6 @@ fun CameraScreen(
     }
 
     fun openScene(scene: CameraScene, primary: DetectionBox, afterReady: () -> Unit) {
-        controller?.pauseAnalysis()
         viewModel.openDetectionScene(scene, primary, afterReady)
     }
 
@@ -123,37 +119,25 @@ fun CameraScreen(
         when (val outcome = result.toStillImageResult(fallbackError)) {
             is StillImageResult.Disease -> openScene(outcome.scene, outcome.primary, onResult)
             is StillImageResult.Healthy -> openScene(outcome.scene, outcome.primary, onResult)
-            is StillImageResult.NoMatch -> {
-                controller?.resumeAnalysis()
-                cameraState = cameraState.copy(
-                    status = DetectionStatus.SEARCHING,
-                    visibleDetections = emptyList(),
-                    stableDetections = emptyList(),
-                    confirmedDetections = emptyList(),
-                    saveEligible = false,
-                    error = noSupportedDiseaseFound,
-                )
-            }
-            is StillImageResult.Failure -> {
-                controller?.resumeAnalysis()
-                cameraState = cameraState.copy(error = outcome.message)
-            }
+            is StillImageResult.NoMatch -> viewModel.openNoMatchScene(outcome.scene, onResult)
+            is StillImageResult.Failure -> cameraState = cameraState.copy(error = outcome.message)
         }
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null || cameraState.isStillImageProcessing) return@rememberLauncherForActivityResult
+        if (uri == null || cameraState.isStillImageProcessing || cameraState.engineState != EngineState.READY) {
+            return@rememberLauncherForActivityResult
+        }
         val activeController = controller
         if (activeController == null) {
             cameraState = cameraState.copy(error = galleryOpenFailed)
             return@rememberLauncherForActivityResult
         }
-        activeController.pauseAnalysis()
+        activeController.stopLivePreview()
         cameraState = cameraState.copy(isStillImageProcessing = true, error = null)
         scope.launch {
             val bitmap = runCatching { withContext(Dispatchers.IO) { context.decodeGalleryBitmap(uri) } }
                 .getOrElse { error ->
-                    activeController.resumeAnalysis()
                     cameraState = cameraState.copy(
                         isStillImageProcessing = false,
                         error = error.message ?: galleryOpenFailed,
@@ -163,17 +147,6 @@ fun CameraScreen(
             activeController.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
                 bitmap.recycle()
                 handleStillResult(result, galleryOpenFailed)
-            }
-        }
-    }
-
-    LaunchedEffect(autoSaveEnabled, cameraState.saveEligible, controller?.currentScene()?.rgbFrame?.sceneToken) {
-        val activeController = controller
-        val scene = activeController?.currentScene()
-        val primary = scene?.stability?.stableDetections?.maxByOrNull { it.confidence }
-        if (autoSaveEnabled && cameraState.saveEligible && scene != null && primary != null) {
-            viewModel.openDetectionScene(scene, primary) {
-                viewModel.saveCurrentResult { saved -> if (saved) activeController.markSaved() }
             }
         }
     }
@@ -191,9 +164,7 @@ fun CameraScreen(
                     } ?: detection.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
                 }
             },
-            onDetectionClick = { selected ->
-                controller?.currentScene()?.let { scene -> openScene(scene, selected, onResult) }
-            },
+            onDetectionClick = null,
         )
         CameraTopBar(
             state = cameraState,
@@ -202,35 +173,29 @@ fun CameraScreen(
         )
         CameraStatus(cameraState, Modifier.align(Alignment.TopCenter).padding(top = 82.dp))
         CameraBottomBar(
-            saveEnabled = cameraState.saveEligible,
             processing = cameraState.isStillImageProcessing,
+            engineState = cameraState.engineState,
+            livePreviewActive = cameraState.livePreviewActive,
             onGallery = {
                 galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             },
             onCapture = {
                 val activeController = controller
-                if (activeController == null || cameraState.isStillImageProcessing) return@CameraBottomBar
-                activeController.pauseAnalysis()
+                if (
+                    activeController == null ||
+                    cameraState.isStillImageProcessing ||
+                    cameraState.engineState != EngineState.READY
+                ) {
+                    return@CameraBottomBar
+                }
+                activeController.stopLivePreview()
                 cameraState = cameraState.copy(isStillImageProcessing = true, error = null)
                 activeController.capturePhoto { result ->
                     handleStillResult(result, captureFailed)
                 }
             },
-            onSave = {
-                val activeController = controller
-                val scene = activeController?.currentScene()
-                val primary = scene?.stability?.stableDetections?.maxByOrNull { it.confidence }
-                if (scene != null && primary != null) {
-                    viewModel.openDetectionScene(scene, primary) {
-                        viewModel.saveCurrentResult { saved ->
-                            if (saved) {
-                                activeController.markSaved()
-                                onSaved()
-                            }
-                        }
-                    }
-                }
-            },
+            onStartLivePreview = { controller?.startLivePreview() },
+            onStopLivePreview = { controller?.stopLivePreview() },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }

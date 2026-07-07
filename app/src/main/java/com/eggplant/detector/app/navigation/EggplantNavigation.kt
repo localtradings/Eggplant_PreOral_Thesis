@@ -123,12 +123,6 @@ fun EggplantNavigation(viewModel: EggplantAppViewModel) {
                     onResult = {
                         navController.navigate(Routes.RESULT)
                     },
-                    onSaved = {
-                        navController.navigate(Routes.HISTORY) {
-                            popUpTo(Routes.HOME)
-                            launchSingleTop = true
-                        }
-                    },
                 )
             }
             composable(Routes.RESULT) {
