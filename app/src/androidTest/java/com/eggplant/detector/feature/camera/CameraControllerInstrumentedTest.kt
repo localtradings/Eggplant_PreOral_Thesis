@@ -22,6 +22,7 @@ import com.eggplant.detector.detection.api.RgbFrame
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -101,6 +102,108 @@ class CameraControllerInstrumentedTest {
         }
     }
 
+    @Test
+    fun repeatedGalleryAnalysisCompletesSequentially() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = CameraController(
+            context = context,
+            lifecycleOwner = TestLifecycleOwner(),
+            engine = PositiveDetectionEngine(),
+            onState = {},
+        )
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        try {
+            val first = analyze(controller, bitmap)
+            val second = analyze(controller, bitmap)
+
+            assertTrue(first.isSuccess)
+            assertTrue(second.isSuccess)
+            assertEquals("leaf-spot", first.getOrThrow().stability.stableDetections.single().modelClass.diseaseId)
+            assertEquals("leaf-spot", second.getOrThrow().stability.stableDetections.single().modelClass.diseaseId)
+        } finally {
+            bitmap.recycle()
+            controller.close()
+        }
+    }
+
+    @Test
+    fun duplicateGalleryAnalysisReturnsControlledFailure() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val engine = BlockingDetectionEngine()
+        val controller = CameraController(
+            context = context,
+            lifecycleOwner = TestLifecycleOwner(),
+            engine = engine,
+            onState = {},
+        )
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        val firstLatch = CountDownLatch(1)
+        val secondLatch = CountDownLatch(1)
+        var firstResult: Result<CameraScene>? = null
+        var secondResult: Result<CameraScene>? = null
+        try {
+            controller.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
+                firstResult = result
+                firstLatch.countDown()
+            }
+            assertTrue("First detection did not start.", engine.detectStarted.await(5, TimeUnit.SECONDS))
+            controller.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
+                secondResult = result
+                secondLatch.countDown()
+            }
+
+            assertTrue("Duplicate gallery callback timed out.", secondLatch.await(5, TimeUnit.SECONDS))
+            assertFalse(secondResult?.isSuccess == true)
+            engine.releaseDetection.countDown()
+            assertTrue("First gallery callback timed out.", firstLatch.await(5, TimeUnit.SECONDS))
+            assertTrue(firstResult?.isSuccess == true)
+        } finally {
+            engine.releaseDetection.countDown()
+            bitmap.recycle()
+            controller.close()
+        }
+    }
+
+    @Test
+    fun detectorFailureReturnsControlledStillFailure() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = CameraController(
+            context = context,
+            lifecycleOwner = TestLifecycleOwner(),
+            engine = FailingDetectionEngine(),
+            onState = {},
+        )
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        try {
+            val result = analyze(controller, bitmap)
+
+            assertFalse(result.isSuccess)
+            assertTrue(result.exceptionOrNull()?.message?.contains("detector failed") == true)
+        } finally {
+            bitmap.recycle()
+            controller.close()
+        }
+    }
+
+    @Test
+    fun repeatedLiveStartStopReturnsNoStableDiseaseWithoutSaving() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = CameraController(
+            context = context,
+            lifecycleOwner = TestLifecycleOwner(),
+            engine = PositiveDetectionEngine(),
+            onState = {},
+        )
+        try {
+            controller.startLivePreview()
+            assertEquals(LivePreviewOutcome.NoStableDetection, controller.finishLivePreview(allowHealthy = false))
+            controller.startLivePreview()
+            assertEquals(LivePreviewOutcome.NoStableDetection, controller.finishLivePreview(allowHealthy = false))
+        } finally {
+            controller.close()
+        }
+    }
+
     private fun analyzeGallery(classIndex: Int): com.eggplant.detector.feature.camera.CameraScene {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val controller = CameraController(
@@ -123,6 +226,17 @@ class CameraControllerInstrumentedTest {
             bitmap.recycle()
             controller.close()
         }
+    }
+
+    private fun analyze(controller: CameraController, bitmap: Bitmap): Result<CameraScene> {
+        val latch = CountDownLatch(1)
+        var scene: Result<CameraScene>? = null
+        controller.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
+            scene = result
+            latch.countDown()
+        }
+        assertTrue(latch.await(5, TimeUnit.SECONDS))
+        return requireNotNull(scene)
     }
 
     private class TestLifecycleOwner : LifecycleOwner {
@@ -174,6 +288,33 @@ class CameraControllerInstrumentedTest {
                 sceneToken = frame.sceneToken,
             ),
         )
+
+        override fun close() = Unit
+    }
+
+    private class BlockingDetectionEngine : DetectionEngine {
+        val detectStarted = CountDownLatch(1)
+        val releaseDetection = CountDownLatch(1)
+        override val state: EngineState = EngineState.READY
+
+        override fun initialize(): EngineState = state
+
+        override fun detect(frame: RgbFrame): Result<DetectionFrame> {
+            detectStarted.countDown()
+            releaseDetection.await(5, TimeUnit.SECONDS)
+            return PositiveDetectionEngine().detect(frame)
+        }
+
+        override fun close() = Unit
+    }
+
+    private class FailingDetectionEngine : DetectionEngine {
+        override val state: EngineState = EngineState.READY
+
+        override fun initialize(): EngineState = state
+
+        override fun detect(frame: RgbFrame): Result<DetectionFrame> =
+            Result.failure(IllegalStateException("detector failed"))
 
         override fun close() = Unit
     }

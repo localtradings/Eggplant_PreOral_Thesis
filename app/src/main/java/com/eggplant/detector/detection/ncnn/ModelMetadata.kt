@@ -38,6 +38,7 @@ data class ModelMetadata(
     fun classFor(index: Int): ModelClass? = classes.getOrNull(index)
 
     companion object {
+        const val FRUIT_BORER_CLASS_INDEX = 1
         const val HEALTHY_LEAF_CLASS_INDEX = 2
         const val HEALTHY_PLANT_CLASS_INDEX = 3
 

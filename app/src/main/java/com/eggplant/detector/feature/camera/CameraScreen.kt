@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -22,7 +24,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -47,6 +51,7 @@ fun CameraScreen(
     onResult: () -> Unit,
 ) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
     val detectHealthyPlantEnabled by viewModel.detectHealthyPlantEnabled.collectAsState()
@@ -55,6 +60,7 @@ fun CameraScreen(
     val healthyPlantName = stringResource(R.string.healthy_plant_name)
     val galleryOpenFailed = stringResource(R.string.gallery_open_failed)
     val captureFailed = stringResource(R.string.capture_failed)
+    val noStableDisease = stringResource(R.string.no_stable_disease_detected)
     var cameraPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
     }
@@ -79,6 +85,8 @@ fun CameraScreen(
 
     var cameraState by remember { mutableStateOf(CameraAnalysisState()) }
     var controller by remember { mutableStateOf<CameraController?>(null) }
+    var captureFlashTrigger by remember { mutableStateOf(0) }
+    val resultNavigationGate = remember { ResultNavigationGate() }
     val scope = rememberCoroutineScope()
     val previewView = remember {
         PreviewView(context).apply {
@@ -110,17 +118,31 @@ fun CameraScreen(
         )
     }
 
-    fun openScene(scene: CameraScene, primary: DetectionBox, afterReady: () -> Unit) {
-        viewModel.openDetectionScene(scene, primary, afterReady)
+    fun routeToResult() {
+        resultNavigationGate.tryRoute(onResult)
+    }
+
+    fun openScene(scene: CameraScene, primary: DetectionBox) {
+        viewModel.openDetectionScene(scene, primary, ::routeToResult)
     }
 
     fun handleStillResult(result: Result<CameraScene>, fallbackError: String) {
         cameraState = cameraState.copy(isStillImageProcessing = false)
         when (val outcome = result.toStillImageResult(fallbackError)) {
-            is StillImageResult.Disease -> openScene(outcome.scene, outcome.primary, onResult)
-            is StillImageResult.Healthy -> openScene(outcome.scene, outcome.primary, onResult)
-            is StillImageResult.NoMatch -> viewModel.openNoMatchScene(outcome.scene, onResult)
+            is StillImageResult.Disease -> openScene(outcome.scene, outcome.primary)
+            is StillImageResult.Healthy -> openScene(outcome.scene, outcome.primary)
+            is StillImageResult.NoMatch -> viewModel.openNoMatchScene(outcome.scene, ::routeToResult)
             is StillImageResult.Failure -> cameraState = cameraState.copy(error = outcome.message)
+        }
+    }
+
+    fun handleLiveRelease(outcome: LivePreviewOutcome) {
+        when (outcome) {
+            is LivePreviewOutcome.Disease -> openScene(outcome.scene, outcome.primary)
+            is LivePreviewOutcome.Healthy -> openScene(outcome.scene, outcome.primary)
+            LivePreviewOutcome.NoStableDetection -> {
+                cameraState = cameraState.copy(error = noStableDisease)
+            }
         }
     }
 
@@ -133,6 +155,7 @@ fun CameraScreen(
             cameraState = cameraState.copy(error = galleryOpenFailed)
             return@rememberLauncherForActivityResult
         }
+        resultNavigationGate.reset()
         activeController.stopLivePreview()
         cameraState = cameraState.copy(isStillImageProcessing = true, error = null)
         scope.launch {
@@ -172,6 +195,7 @@ fun CameraScreen(
             onToggleTorch = { controller?.toggleTorch() },
         )
         CameraStatus(cameraState, Modifier.align(Alignment.TopCenter).padding(top = 82.dp))
+        CaptureFlashOverlay(captureFlashTrigger)
         CameraBottomBar(
             processing = cameraState.isStillImageProcessing,
             engineState = cameraState.engineState,
@@ -188,15 +212,39 @@ fun CameraScreen(
                 ) {
                     return@CameraBottomBar
                 }
-                activeController.stopLivePreview()
+                resultNavigationGate.reset()
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                captureFlashTrigger += 1
+                activeController.finishLivePreview(allowHealthy = false)
                 cameraState = cameraState.copy(isStillImageProcessing = true, error = null)
                 activeController.capturePhoto { result ->
                     handleStillResult(result, captureFailed)
                 }
             },
-            onStartLivePreview = { controller?.startLivePreview() },
-            onStopLivePreview = { controller?.stopLivePreview() },
+            onStartLivePreview = {
+                resultNavigationGate.reset()
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                controller?.startLivePreview()
+            },
+            onStopLivePreview = {
+                val outcome = controller?.finishLivePreview(
+                    allowHealthy = detectHealthyLeafEnabled || detectHealthyPlantEnabled,
+                ) ?: LivePreviewOutcome.NoStableDetection
+                handleLiveRelease(outcome)
+            },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
+}
+
+@Composable
+private fun CaptureFlashOverlay(trigger: Int) {
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(trigger) {
+        if (trigger > 0) {
+            alpha.snapTo(0.72f)
+            alpha.animateTo(0f, tween(durationMillis = 150))
+        }
+    }
+    Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = alpha.value)))
 }

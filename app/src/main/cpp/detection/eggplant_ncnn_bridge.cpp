@@ -88,7 +88,11 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_create(
     engine->class_count = class_count;
     if (use_vulkan == JNI_TRUE) ensure_gpu_instance();
     engine->net.opt.use_vulkan_compute = use_vulkan == JNI_TRUE && ncnn::get_gpu_count() > 0;
-    engine->net.opt.num_threads = std::max(1, ncnn::get_big_cpu_count());
+    // Android emulator/device lifecycle transitions can change CPU affinity while
+    // OpenMP is lazily initializing. Keep NCNN deterministic and crash-safe; the
+    // Kotlin side already serializes calls on a dedicated executor.
+    engine->net.opt.num_threads = 1;
+    engine->net.opt.openmp_blocktime = 0;
     const std::string param = to_string(env, param_path);
     const std::string weights = to_string(env, bin_path);
     if (param.empty() || weights.empty() ||
@@ -140,19 +144,24 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     const int pad_right = engine->input_size - resized_width - pad_left;
     const int pad_top = (engine->input_size - resized_height) / 2;
     const int pad_bottom = engine->input_size - resized_height - pad_top;
-    ncnn::Mat input;
-    ncnn::copy_make_border(
-        resized,
-        input,
-        pad_top,
-        pad_bottom,
-        pad_left,
-        pad_right,
-        ncnn::BORDER_CONSTANT,
-        114.0f
-    );
-    constexpr float normalize[3] = {1.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f};
-    input.substract_mean_normalize(nullptr, normalize);
+    (void)pad_right;
+    (void)pad_bottom;
+    ncnn::Mat input(engine->input_size, engine->input_size, 3);
+    input.fill(114.0f);
+    for (int channel = 0; channel < 3; ++channel) {
+        const ncnn::Mat source_channel = resized.channel(channel);
+        ncnn::Mat target_channel = input.channel(channel);
+        for (int y = 0; y < resized_height; ++y) {
+            const float* source_row = source_channel.row(y);
+            float* target_row = target_channel.row(y + pad_top) + pad_left;
+            std::copy(source_row, source_row + resized_width, target_row);
+        }
+    }
+    float* input_values = input;
+    const size_t input_values_count = input.total();
+    for (size_t index = 0; index < input_values_count; ++index) {
+        input_values[index] *= 1.0f / 255.0f;
+    }
 
     ncnn::Extractor extractor = engine->net.create_extractor();
     extractor.input("in0", input);
@@ -238,7 +247,10 @@ extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM*, void*) {
     // Android may change a process CPU mask while instrumentation or lifecycle
     // transitions are active. LLVM OpenMP core pinning can abort in that state;
     // NCNN still uses its configured worker count without processor binding.
-    setenv("KMP_AFFINITY", "disabled", 0);
+    setenv("KMP_AFFINITY", "disabled", 1);
+    setenv("OMP_PROC_BIND", "false", 1);
+    setenv("OMP_PLACES", "threads", 1);
+    setenv("KMP_BLOCKTIME", "0", 1);
     return JNI_VERSION_1_6;
 }
 

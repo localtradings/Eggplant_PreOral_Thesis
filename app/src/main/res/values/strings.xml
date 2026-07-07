@@ -94,6 +94,11 @@
     <string name="scan_again">Scan Again</string>
     <string name="signs_detected">Signs Detected</string>
     <string name="recommended_action">Recommended Action</string>
+    <string name="saved_scan_snapshot">Saved scan snapshot</string>
+    <string name="open_result_image_viewer">Open enlarged scan image</string>
+    <string name="close_result_image_viewer">Close enlarged scan image</string>
+    <string name="show_detection_boxes">Show boxes</string>
+    <string name="hide_detection_boxes">Hide boxes</string>
     <string name="confidence_label">Confidence</string>
     <string name="confidence_value">%1$s confidence</string>
     <string name="disease_detail">Disease Detail</string>
@@ -132,9 +137,10 @@
     <string name="analyzing">Analyzing…</string>
     <string name="analyzing_detection">Analyzing detection</string>
     <string name="hold_for_live_preview">Hold for live preview</string>
-    <string name="live_preview_active">Live preview active — release to stop, then tap to capture.</string>
-    <string name="live_preview_disease">Live preview found a disease — release, then tap to capture.</string>
-    <string name="live_preview_healthy">Live preview looks healthy — release, then tap to capture if needed.</string>
+    <string name="live_preview_active">Live preview active — hold steady and release to stop.</string>
+    <string name="live_preview_disease">Stable disease detected — release for Result.</string>
+    <string name="live_preview_healthy">Healthy result confirmed — release for Result.</string>
+    <string name="no_stable_disease_detected">No stable disease detected.</string>
     <string name="healthy_leaf_name">Healthy Leaf</string>
     <string name="healthy_plant_name">Healthy Plant</string>
 </resources>

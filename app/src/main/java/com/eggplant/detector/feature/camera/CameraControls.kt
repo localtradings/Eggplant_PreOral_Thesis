@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
@@ -33,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -98,6 +101,11 @@ internal fun CameraBottomBar(
     val shutterCoordinator = remember { ShutterActionCoordinator() }
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    val shutterScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.92f else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "shutterScale",
+    )
     LaunchedEffect(isPressed) {
         if (shutterCoordinator.onPressedChanged(isPressed) == ShutterAction.STOP_LIVE_PREVIEW) {
             onStopLivePreview()
@@ -117,6 +125,10 @@ internal fun CameraBottomBar(
         Surface(
             modifier = Modifier
                 .size(76.dp)
+                .graphicsLayer {
+                    scaleX = shutterScale
+                    scaleY = shutterScale
+                }
                 .border(4.dp, Color.White.copy(alpha = .7f), CircleShape)
                 .combinedClickable(
                     interactionSource = interactionSource,

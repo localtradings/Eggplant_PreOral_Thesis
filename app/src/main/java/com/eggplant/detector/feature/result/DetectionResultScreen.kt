@@ -3,6 +3,8 @@ package com.eggplant.detector.feature.result
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -25,16 +29,27 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -216,50 +231,154 @@ private fun SnapshotPreview(result: ScanResult, modifier: Modifier = Modifier) {
         }
     }
     val snapshot = bitmap
+    var viewerOpen by remember(result.imagePath) { mutableStateOf(false) }
     if (snapshot == null) {
         ResultArtwork(result.category, result.name, modifier, result.diseaseId)
         return
     }
-    Box(modifier.background(Color.Black, RoundedCornerShape(24.dp))) {
+    val openViewerDescription = stringResource(R.string.open_result_image_viewer)
+    val overlayState = result.toOverlayState(snapshot.width, snapshot.height)
+    val displayName = result.overlayDisplayName()
+    Box(
+        modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color.Black)
+            .clickable(
+                role = Role.Button,
+                onClickLabel = openViewerDescription,
+                onClick = { viewerOpen = true },
+            )
+            .semantics { contentDescription = openViewerDescription },
+    ) {
         Image(
             bitmap = snapshot.asImageBitmap(),
             contentDescription = localized("Saved scan snapshot", "Naka-save na larawan ng scan"),
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit,
         )
-        val overlayDetections = result.detections.mapNotNull { detection ->
-            ModelMetadata.EGGPLANT_YOLO26M.classFor(detection.modelClassIndex)?.let { modelClass ->
-                DetectionBox(modelClass, detection.confidence / 100f, detection.bounds)
-            }
-        }
         DetectionOverlay(
-            state = CameraAnalysisState(
-                status = when (result.outcome) {
-                    ScanOutcome.DISEASE -> DetectionStatus.DISEASE_DETECTED
-                    ScanOutcome.HEALTHY_CONFIRMED -> DetectionStatus.HEALTHY
-                    ScanOutcome.NO_MATCH -> DetectionStatus.SEARCHING
-                },
-                visibleDetections = overlayDetections,
-                stableDetections = overlayDetections.filterNot { it.modelClass.isHealthy },
-                confirmedDetections = overlayDetections,
-                frameWidth = snapshot.width,
-                frameHeight = snapshot.height,
-            ),
-            displayName = { detection ->
-                result.detections.firstOrNull { it.modelClassIndex == detection.modelClass.index }?.name
-                    ?: detection.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
-            },
+            state = overlayState,
+            displayName = displayName,
             onDetectionClick = null,
             contentScale = OverlayContentScale.FIT,
+        )
+    }
+    if (viewerOpen) {
+        ZoomableResultImageDialog(
+            snapshot = snapshot,
+            overlayState = overlayState,
+            displayName = displayName,
+            onDismiss = { viewerOpen = false },
         )
     }
 }
 
 @Composable
-private fun localizedCategory(category: com.eggplant.detector.domain.model.ScanCategory): String = when (category) {
-    com.eggplant.detector.domain.model.ScanCategory.LEAF_DISEASE -> stringResource(R.string.leaf_disease)
-    com.eggplant.detector.domain.model.ScanCategory.FRUIT_DISEASE -> stringResource(R.string.fruit_disease)
-    com.eggplant.detector.domain.model.ScanCategory.NO_DISEASE_DETECTED -> localized("Healthy", "Malusog")
+private fun ZoomableResultImageDialog(
+    snapshot: android.graphics.Bitmap,
+    overlayState: CameraAnalysisState,
+    displayName: (DetectionBox) -> String,
+    onDismiss: () -> Unit,
+) {
+    var transform by remember(snapshot) { mutableStateOf(ZoomableImageTransform()) }
+    var showBoxes by remember(snapshot) { mutableStateOf(true) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clipToBounds(),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = transform.scale
+                        scaleY = transform.scale
+                        translationX = transform.offset.x
+                        translationY = transform.offset.y
+                    }
+                    .pointerInput(snapshot) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            transform = transform.applyGesture(zoomChange = zoom, panChange = pan)
+                        }
+                    },
+            ) {
+                Image(
+                    bitmap = snapshot.asImageBitmap(),
+                    contentDescription = stringResource(R.string.saved_scan_snapshot),
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+                if (showBoxes) {
+                    DetectionOverlay(
+                        state = overlayState,
+                        displayName = displayName,
+                        onDetectionClick = null,
+                        contentScale = OverlayContentScale.FIT,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .background(Color.Black.copy(alpha = .72f))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = stringResource(R.string.close_result_image_viewer),
+                        tint = Color.White,
+                    )
+                }
+                TextButton(onClick = { showBoxes = !showBoxes }) {
+                    Text(
+                        stringResource(if (showBoxes) R.string.hide_detection_boxes else R.string.show_detection_boxes),
+                        color = Color.White,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun ScanResult.toOverlayState(frameWidth: Int, frameHeight: Int): CameraAnalysisState {
+    val overlayDetections = detections.mapNotNull { detection ->
+        ModelMetadata.EGGPLANT_YOLO26M.classFor(detection.modelClassIndex)?.let { modelClass ->
+            DetectionBox(modelClass, detection.confidence / 100f, detection.bounds)
+        }
+    }
+    return CameraAnalysisState(
+        status = when (outcome) {
+            ScanOutcome.DISEASE -> DetectionStatus.DISEASE_DETECTED
+            ScanOutcome.HEALTHY_CONFIRMED -> DetectionStatus.HEALTHY
+            ScanOutcome.NO_MATCH -> DetectionStatus.SEARCHING
+        },
+        visibleDetections = overlayDetections,
+        stableDetections = overlayDetections.filterNot { it.modelClass.isHealthy },
+        confirmedDetections = overlayDetections,
+        frameWidth = frameWidth,
+        frameHeight = frameHeight,
+    )
+}
+
+private fun ScanResult.overlayDisplayName(): (DetectionBox) -> String = { detection ->
+    detections.firstOrNull { it.modelClassIndex == detection.modelClass.index }?.name
+        ?: detection.modelClass.modelLabel.replace('_', ' ').replace('-', ' ')
+}
+
+@Composable
+private fun localizedCategory(category: ScanCategory): String = when (category) {
+    ScanCategory.LEAF_DISEASE -> stringResource(R.string.leaf_disease)
+    ScanCategory.FRUIT_DISEASE -> stringResource(R.string.fruit_disease)
+    ScanCategory.NO_DISEASE_DETECTED -> localized("Healthy", "Malusog")
 }
 
 @Composable

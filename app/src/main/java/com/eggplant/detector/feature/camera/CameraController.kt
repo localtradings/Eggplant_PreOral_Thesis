@@ -3,6 +3,7 @@ package com.eggplant.detector.feature.camera
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.util.Log
 import android.view.Surface
 import android.util.Size
 import androidx.camera.core.Camera
@@ -17,8 +18,13 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import com.eggplant.detector.BuildConfig
 import com.eggplant.detector.detection.api.DetectionEngine
 import com.eggplant.detector.detection.api.DetectionClassPolicy
+import com.eggplant.detector.detection.api.DetectionFrame
+import com.eggplant.detector.detection.api.DetectionGate
+import com.eggplant.detector.detection.api.DetectionGateDecision
+import com.eggplant.detector.detection.api.DetectionBox
 import com.eggplant.detector.detection.api.DetectionStatus
 import com.eggplant.detector.detection.api.EngineState
 import com.eggplant.detector.detection.api.InputSource
@@ -27,6 +33,10 @@ import com.eggplant.detector.detection.api.StabilityResult
 import com.eggplant.detector.detection.tracking.DetectionStabilityTracker
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.Locale
 
 class CameraController(
     context: Context,
@@ -38,27 +48,45 @@ class CameraController(
     private val mainExecutor = ContextCompat.getMainExecutor(appContext)
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val tracker = DetectionStabilityTracker()
+    private val livePreviewSession = LivePreviewSession()
+    private val startRequested = AtomicBoolean(false)
+    private val captureInFlight = AtomicBoolean(false)
+    private val galleryInFlight = AtomicBoolean(false)
+    private val stillRequestToken = AtomicLong(0L)
+    private val liveToken = AtomicLong(0L)
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var imageAnalysis: ImageAnalysis? = null
     private var imageCapture: ImageCapture? = null
+    @Volatile private var closed = false
     @Volatile private var paused = true
     @Volatile private var classPolicy = DetectionClassPolicy()
     @Volatile private var latestScene: CameraScene? = null
+    @Volatile private var lastLiveAnalyzeStartedMillis = 0L
+    @Volatile private var liveStartedAtMillis = 0L
+    @Volatile private var liveFirstFrameLogged = false
+    @Volatile private var liveFirstFeedbackLogged = false
     @Volatile private var state = CameraAnalysisState()
 
     fun start(previewView: PreviewView) {
+        if (closed || !startRequested.compareAndSet(false, true)) return
         emit(state.copy(engineState = EngineState.UNINITIALIZED, error = null))
-        analysisExecutor.execute {
+        enqueueAnalysis(
+            onRejected = {
+                emit(state.copy(engineState = EngineState.FAILED, error = "Detection model could not be started."))
+            },
+        ) {
             val initialized = engine.initialize()
+            if (closed) return@enqueueAnalysis
             if (initialized != EngineState.READY) {
                 emit(state.copy(engineState = initialized, error = "Detection model could not be loaded."))
-                return@execute
+                return@enqueueAnalysis
             }
             emit(state.copy(engineState = EngineState.READY))
             val providerFuture = ProcessCameraProvider.getInstance(appContext)
             providerFuture.addListener(
                 {
+                    if (closed) return@addListener
                     runCatching {
                         provider = providerFuture.get()
                         bindCamera(previewView)
@@ -82,7 +110,13 @@ class CameraController(
     fun currentScene(): CameraScene? = latestScene
 
     fun startLivePreview() {
-        if (engine.state != EngineState.READY) return
+        if (closed || engine.state != EngineState.READY) return
+        val token = livePreviewSession.start()
+        liveToken.set(token)
+        liveStartedAtMillis = SystemClock.elapsedRealtime()
+        lastLiveAnalyzeStartedMillis = 0L
+        liveFirstFrameLogged = false
+        liveFirstFeedbackLogged = false
         resumeAnalysis()
         tracker.reset()
         latestScene = null
@@ -100,7 +134,14 @@ class CameraController(
     }
 
     fun stopLivePreview() {
+        finishLivePreview(allowHealthy = false)
+    }
+
+    fun finishLivePreview(allowHealthy: Boolean): LivePreviewOutcome {
         pauseAnalysis()
+        liveToken.set(0L)
+        liveStartedAtMillis = 0L
+        val outcome = livePreviewSession.stop(allowHealthy)
         tracker.reset()
         latestScene = null
         emit(
@@ -114,9 +155,11 @@ class CameraController(
                 error = null,
             ),
         )
+        return outcome
     }
 
     fun updateClassPolicy(policy: DetectionClassPolicy) {
+        if (closed) return
         if (classPolicy == policy) return
         classPolicy = policy
         tracker.reset()
@@ -134,6 +177,7 @@ class CameraController(
     }
 
     fun markSaved() {
+        if (closed) return
         tracker.markSaved()
         val scene = latestScene ?: return
         val updated = scene.copy(stability = scene.stability.copy(saveEligible = false))
@@ -142,6 +186,7 @@ class CameraController(
     }
 
     fun toggleTorch() {
+        if (closed) return
         val activeCamera = camera ?: return
         if (!activeCamera.cameraInfo.hasFlashUnit()) return
         val requested = !state.torchEnabled
@@ -157,44 +202,114 @@ class CameraController(
     }
 
     fun analyzeBitmap(bitmap: Bitmap, source: InputSource, onComplete: (Result<CameraScene>) -> Unit) {
-        analysisExecutor.execute {
+        if (closed) {
+            onComplete(Result.failure(IllegalStateException("Camera controller is closed.")))
+            return
+        }
+        val inFlight = if (source == InputSource.GALLERY) galleryInFlight else null
+        if (inFlight != null && !inFlight.compareAndSet(false, true)) {
+            onComplete(Result.failure(IllegalStateException("Gallery analysis is already running.")))
+            return
+        }
+        val requestToken = stillRequestToken.incrementAndGet()
+        enqueueAnalysis(
+            onRejected = {
+                inFlight?.set(false)
+                onComplete(Result.failure(IllegalStateException("Detection executor is unavailable.")))
+            },
+        ) {
             val result = runCatching { detectBitmap(bitmap, source) }
-            result.onSuccess(::emitStillScene)
-            mainExecutor.execute { onComplete(result) }
+            completeStillRequest(requestToken, inFlight, result, onComplete)
         }
     }
 
     fun capturePhoto(onComplete: (Result<CameraScene>) -> Unit) {
+        if (closed) {
+            onComplete(Result.failure(IllegalStateException("Camera controller is closed.")))
+            return
+        }
+        if (!captureInFlight.compareAndSet(false, true)) {
+            onComplete(Result.failure(IllegalStateException("A capture is already running.")))
+            return
+        }
         val capture = imageCapture
         if (capture == null) {
+            captureInFlight.set(false)
             onComplete(Result.failure(IllegalStateException("Camera capture is not ready.")))
             return
         }
-        capture.takePicture(
-            analysisExecutor,
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    val result = runCatching {
-                        val bitmap = image.toBitmap()
-                        try {
-                            detectBitmap(bitmap, InputSource.CAPTURE, image.imageInfo.rotationDegrees)
-                        } finally {
-                            bitmap.recycle()
+        val requestToken = stillRequestToken.incrementAndGet()
+        try {
+            capture.takePicture(
+                analysisExecutor,
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(image: ImageProxy) {
+                        val result = runCatching {
+                            check(!closed) { "Camera controller is closed." }
+                            val bitmap = image.toBitmap()
+                            try {
+                                detectBitmap(bitmap, InputSource.CAPTURE, image.imageInfo.rotationDegrees)
+                            } finally {
+                                bitmap.recycle()
+                            }
                         }
+                        image.close()
+                        completeStillRequest(requestToken, captureInFlight, result, onComplete)
                     }
-                    image.close()
-                    result.onSuccess(::emitStillScene)
-                    mainExecutor.execute { onComplete(result) }
-                }
 
-                override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                    mainExecutor.execute { onComplete(Result.failure(exception)) }
-                }
-            },
-        )
+                    override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                        completeStillRequest(requestToken, captureInFlight, Result.failure(exception), onComplete)
+                    }
+                },
+            )
+        } catch (error: RejectedExecutionException) {
+            captureInFlight.set(false)
+            mainExecutor.execute {
+                onComplete(Result.failure(IllegalStateException("Detection executor is unavailable.", error)))
+            }
+        } catch (error: RuntimeException) {
+            captureInFlight.set(false)
+            mainExecutor.execute { onComplete(Result.failure(error)) }
+        }
+    }
+
+    private fun completeStillRequest(
+        requestToken: Long,
+        inFlight: AtomicBoolean?,
+        result: Result<CameraScene>,
+        onComplete: (Result<CameraScene>) -> Unit,
+    ) {
+        if (isCurrentStillRequest(requestToken)) {
+            result.onSuccess(::emitStillScene)
+        }
+        mainExecutor.execute {
+            inFlight?.set(false)
+            if (isCurrentStillRequest(requestToken)) {
+                onComplete(result)
+            }
+        }
+    }
+
+    private fun isCurrentStillRequest(requestToken: Long): Boolean = !closed && stillRequestToken.get() == requestToken
+
+    private fun enqueueAnalysis(onRejected: () -> Unit, task: () -> Unit): Boolean {
+        if (closed || analysisExecutor.isShutdown || analysisExecutor.isTerminated) {
+            mainExecutor.execute(onRejected)
+            return false
+        }
+        return try {
+            analysisExecutor.execute {
+                if (!closed) task()
+            }
+            true
+        } catch (error: RejectedExecutionException) {
+            mainExecutor.execute(onRejected)
+            false
+        }
     }
 
     private fun bindCamera(previewView: PreviewView) {
+        if (closed) return
         val analysisResolutionSelector = ResolutionSelector.Builder()
             .setResolutionStrategy(
                 ResolutionStrategy(
@@ -241,7 +356,11 @@ class CameraController(
 
     private fun analyzeImage(image: ImageProxy) {
         try {
-            if (paused || engine.state != EngineState.READY) return
+            val token = liveToken.get()
+            val now = SystemClock.elapsedRealtime()
+            if (closed || paused || token == 0L || engine.state != EngineState.READY) return
+            if (now - lastLiveAnalyzeStartedMillis < LIVE_FRAME_THROTTLE_MILLIS) return
+            lastLiveAnalyzeStartedMillis = now
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer.duplicate().apply { rewind() }
             val rgba = ByteArray(buffer.remaining()).also(buffer::get)
@@ -256,14 +375,24 @@ class CameraController(
                 width = rotated.width,
                 height = rotated.height,
                 rgbBytes = rotated.rgbBytes,
-                timestampMillis = SystemClock.elapsedRealtime(),
+                timestampMillis = now,
                 source = InputSource.LIVE,
                 sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
             )
             val rawDetection = engine.detect(rgbFrame).getOrThrow()
-            val detection = rawDetection.copy(detections = classPolicy.filter(rawDetection.detections))
+            if (!isCurrentLiveRequest(token)) return
+            val detection = gateDetections(rawDetection)
             val stability = tracker.update(detection)
-            latestScene = CameraScene(rgbFrame, detection, stability)
+            logLiveLatencyIfNeeded(
+                token = token,
+                analyzeStartedAtMillis = now,
+                analyzeFinishedAtMillis = SystemClock.elapsedRealtime(),
+                detection = detection,
+                stability = stability,
+            )
+            val scene = CameraScene(rgbFrame, detection, stability)
+            latestScene = scene
+            livePreviewSession.record(token, scene)
             emit(
                 state.copy(
                     engineState = EngineState.READY,
@@ -280,11 +409,13 @@ class CameraController(
                 ),
             )
         } catch (error: Throwable) {
-            emit(state.copy(error = error.message ?: "Live detection failed."))
+            if (!closed) emit(state.copy(error = error.message ?: "Live detection failed."))
         } finally {
             image.close()
         }
     }
+
+    private fun isCurrentLiveRequest(token: Long): Boolean = !closed && !paused && liveToken.get() == token
 
     private fun Bitmap.toRgbFrame(source: InputSource): RgbFrame {
         val pixels = IntArray(width * height)
@@ -326,7 +457,7 @@ class CameraController(
             sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
         )
         val rawDetection = engine.detect(rgb).getOrThrow()
-        val detection = rawDetection.copy(detections = classPolicy.filter(rawDetection.detections))
+        val detection = gateDetections(rawDetection)
         val diseases = detection.detections.filterNot { it.modelClass.isHealthy }
         val status = when {
             diseases.isNotEmpty() -> DetectionStatus.DISEASE_DETECTED
@@ -344,6 +475,66 @@ class CameraController(
                 confirmedDetections = detection.detections,
             ),
         )
+    }
+
+    private fun gateDetections(rawDetection: DetectionFrame): DetectionFrame {
+        val policyFiltered = rawDetection.copy(detections = classPolicy.filter(rawDetection.detections))
+        val gated = DetectionGate.filter(policyFiltered) { detection, decision ->
+            logRejectedDetection(rawDetection.source, detection, decision)
+        }
+        if (BuildConfig.DEBUG) {
+            Log.d(
+                LOG_TAG,
+                "source=${rawDetection.source} raw=${rawDetection.detections.size} " +
+                    "policy=${policyFiltered.detections.size} gated=${gated.detections.size}",
+            )
+        }
+        return gated
+    }
+
+    private fun logRejectedDetection(
+        source: InputSource,
+        detection: DetectionBox,
+        decision: DetectionGateDecision,
+    ) {
+        if (!BuildConfig.DEBUG) return
+        val area = (detection.bounds.right - detection.bounds.left) *
+            (detection.bounds.bottom - detection.bounds.top)
+        Log.d(
+            LOG_TAG,
+            "source=$source rejected class=${detection.modelClass.index}:${detection.modelClass.modelLabel} " +
+                "confidence=${String.format(Locale.US, "%.3f", detection.confidence)} " +
+                "area=${String.format(Locale.US, "%.4f", area)} reason=${decision.reason}",
+        )
+    }
+
+    private fun logLiveLatencyIfNeeded(
+        token: Long,
+        analyzeStartedAtMillis: Long,
+        analyzeFinishedAtMillis: Long,
+        detection: DetectionFrame,
+        stability: StabilityResult,
+    ) {
+        if (!BuildConfig.DEBUG || token != liveToken.get()) return
+        val startedAt = liveStartedAtMillis
+        if (startedAt == 0L) return
+        if (!liveFirstFrameLogged) {
+            liveFirstFrameLogged = true
+            Log.d(
+                LOG_TAG,
+                "live_first_frame_latency_ms=${analyzeFinishedAtMillis - startedAt} " +
+                    "analysis_queue_ms=${analyzeStartedAtMillis - startedAt} " +
+                    "inference_ms=${detection.inferenceMillis} detections=${detection.detections.size}",
+            )
+        }
+        if (!liveFirstFeedbackLogged && stability.status != DetectionStatus.SEARCHING) {
+            liveFirstFeedbackLogged = true
+            Log.d(
+                LOG_TAG,
+                "live_first_feedback_latency_ms=${analyzeFinishedAtMillis - startedAt} " +
+                    "status=${stability.status} confirmed=${stability.confirmedDetections.size}",
+            )
+        }
     }
 
     private fun emitStillScene(scene: CameraScene) {
@@ -366,15 +557,35 @@ class CameraController(
     }
 
     private fun emit(newState: CameraAnalysisState) {
+        if (closed) return
         state = newState
-        mainExecutor.execute { onState(newState) }
+        mainExecutor.execute {
+            if (!closed) onState(newState)
+        }
     }
 
     override fun close() {
+        if (closed) return
+        closed = true
         paused = true
+        liveToken.set(0L)
+        stillRequestToken.incrementAndGet()
+        captureInFlight.set(false)
+        galleryInFlight.set(false)
         imageAnalysis?.clearAnalyzer()
-        mainExecutor.execute { provider?.unbindAll() }
+        mainExecutor.execute {
+            runCatching { provider?.unbindAll() }
+            camera = null
+            imageAnalysis = null
+            imageCapture = null
+            provider = null
+        }
         engine.close()
         analysisExecutor.shutdownNow()
+    }
+
+    companion object {
+        private const val LIVE_FRAME_THROTTLE_MILLIS = 150L
+        private const val LOG_TAG = "EggplantDetection"
     }
 }
