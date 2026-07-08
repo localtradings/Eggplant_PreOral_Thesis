@@ -55,12 +55,6 @@ void configure_stable_cpu_runtime() {
 void configure_stable_cpu_options(ncnn::Option& options) {
     options.num_threads = 1;
     options.openmp_blocktime = 0;
-    options.use_fp16_packed = false;
-    options.use_fp16_storage = false;
-    options.use_fp16_arithmetic = false;
-    options.use_bf16_packed = false;
-    options.use_bf16_storage = false;
-    options.use_packing_layout = false;
 }
 
 void ensure_gpu_instance() {
@@ -192,7 +186,7 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     ncnn::Extractor extractor = engine->net.create_extractor();
     extractor.input("in0", input);
     ncnn::Mat output;
-    if (extractor.extract("out0", output, 1) != 0 || output.h != 4 + engine->class_count) {
+    if (extractor.extract("out0", output) != 0 || output.h != 4 + engine->class_count) {
         return env->NewFloatArray(0);
     }
 

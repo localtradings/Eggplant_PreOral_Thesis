@@ -246,14 +246,18 @@ class CameraController(
                     override fun onCaptureSuccess(image: ImageProxy) {
                         val result = runCatching {
                             check(!closed) { "Camera controller is closed." }
-                            val bitmap = image.toBitmap()
+                            val rotationDegrees = image.imageInfo.rotationDegrees
+                            val bitmap = try {
+                                image.toBitmap()
+                            } finally {
+                                image.close()
+                            }
                             try {
-                                detectBitmap(bitmap, InputSource.CAPTURE, image.imageInfo.rotationDegrees)
+                                detectBitmap(bitmap, InputSource.CAPTURE, rotationDegrees)
                             } finally {
                                 bitmap.recycle()
                             }
                         }
-                        image.close()
                         completeStillRequest(requestToken, captureInFlight, result, onComplete)
                     }
 

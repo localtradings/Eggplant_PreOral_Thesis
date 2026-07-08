@@ -46,7 +46,7 @@ data class ModelMetadata(
             modelVersion = "eggplant-yolo26m-v3-clean-768-20260707",
             runtimeVersion = "ncnn-20260526",
             inputSize = 768,
-            confidenceThreshold = 0.15f,
+            confidenceThreshold = 0.12f,
             paramSha256 = "8f5eb9a0e6c01a45a1b68333b72f868a38fd24e451fb0fcd862b11e337881289",
             binSha256 = "d6cd0a038cdd16e1d8bb3c44fa2b18043636c51f0b59446df9ce176cb39a5239",
             classes = listOf(

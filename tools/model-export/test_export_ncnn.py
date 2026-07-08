@@ -50,7 +50,7 @@ class InstallNcnnTest(unittest.TestCase):
             self.assertEqual("eggplant-yolo26m-v3-clean-768-20260707", metadata["modelVersion"])
             self.assertEqual("ncnn-20260526", metadata["runtimeVersion"])
             self.assertEqual(768, metadata["inputSize"])
-            self.assertEqual(0.15, metadata["confidenceThreshold"])
+            self.assertEqual(0.12, metadata["confidenceThreshold"])
             self.assertEqual(hashlib.sha256(param.read_bytes()).hexdigest(), metadata["paramSha256"])
             self.assertEqual(hashlib.sha256(weights.read_bytes()).hexdigest(), metadata["binSha256"])
             self.assertEqual("8.4.90", metadata["exporterVersion"])

@@ -174,7 +174,7 @@ fun ResultReport(
                         shape = RoundedCornerShape(50),
                     ) {
                         Text(
-                            localizedCategory(result.category),
+                            localizedCategory(result),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
@@ -375,10 +375,14 @@ private fun ScanResult.overlayDisplayName(): (DetectionBox) -> String = { detect
 }
 
 @Composable
-private fun localizedCategory(category: ScanCategory): String = when (category) {
+private fun localizedCategory(result: ScanResult): String = when (result.category) {
     ScanCategory.LEAF_DISEASE -> stringResource(R.string.leaf_disease)
     ScanCategory.FRUIT_DISEASE -> stringResource(R.string.fruit_disease)
-    ScanCategory.NO_DISEASE_DETECTED -> localized("Healthy", "Malusog")
+    ScanCategory.NO_DISEASE_DETECTED -> when (result.outcome) {
+        ScanOutcome.HEALTHY_CONFIRMED -> localized("Healthy", "Malusog")
+        ScanOutcome.NO_MATCH -> localized("Unconfirmed", "Hindi kumpirmado")
+        ScanOutcome.DISEASE -> localized("Unconfirmed", "Hindi kumpirmado")
+    }
 }
 
 @Composable

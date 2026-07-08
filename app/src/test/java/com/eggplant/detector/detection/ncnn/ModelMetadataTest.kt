@@ -13,7 +13,7 @@ class ModelMetadataTest {
 
         assertEquals("eggplant-yolo26m-v3-clean-768-20260707", metadata.modelVersion)
         assertEquals(768, metadata.inputSize)
-        assertEquals(0.15f, metadata.confidenceThreshold)
+        assertEquals(0.12f, metadata.confidenceThreshold)
         assertEquals("ncnn-20260526", metadata.runtimeVersion)
         assertEquals(
             "8f5eb9a0e6c01a45a1b68333b72f868a38fd24e451fb0fcd862b11e337881289",
