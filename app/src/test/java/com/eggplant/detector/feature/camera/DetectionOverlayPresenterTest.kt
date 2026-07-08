@@ -15,14 +15,15 @@ class DetectionOverlayPresenterTest {
     )
 
     @Test
-    fun `overlay renders only confirmed detections`() {
+    fun `overlay renders tentative detections immediately and labels confirmed detections`() {
         val tentative = presentOverlayDetections(
             visible = listOf(leafSpot),
             confirmed = emptyList(),
             displayName = { "Leaf Spot" },
-        )
+        ).single()
 
-        assertTrue(tentative.isEmpty())
+        assertEquals(OverlayPhase.TENTATIVE, tentative.phase)
+        assertEquals(null, tentative.label)
 
         val confirmed = presentOverlayDetections(
             visible = listOf(leafSpot),
@@ -31,11 +32,23 @@ class DetectionOverlayPresenterTest {
         ).single()
 
         assertEquals(OverlayPhase.CONFIRMED, confirmed.phase)
-        assertEquals("Leaf Spot · 87%", confirmed.label)
+        assertEquals("Leaf Spot", confirmed.label)
     }
 
     @Test
-    fun `confirmation requires the same class in the same spatial region`() {
+    fun `held confirmation renders when no current visible detection exists`() {
+        val confirmed = presentOverlayDetections(
+            visible = emptyList(),
+            confirmed = listOf(leafSpot),
+            displayName = { "Leaf Spot" },
+        ).single()
+
+        assertEquals(OverlayPhase.CONFIRMED, confirmed.phase)
+        assertEquals("Leaf Spot", confirmed.label)
+    }
+
+    @Test
+    fun `stale confirmation is replaced by a current tentative detection`() {
         val otherRegion = leafSpot.copy(bounds = NormalizedBox(0.7f, 0.7f, 0.9f, 0.9f))
 
         val items = presentOverlayDetections(
@@ -44,6 +57,7 @@ class DetectionOverlayPresenterTest {
             displayName = { "Leaf Spot" },
         )
 
-        assertTrue(items.isEmpty())
+        assertEquals(1, items.size)
+        assertEquals(OverlayPhase.TENTATIVE, items.single().phase)
     }
 }

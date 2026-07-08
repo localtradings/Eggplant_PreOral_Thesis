@@ -13,8 +13,8 @@ android {
         applicationId = "com.eggplant.detector"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.4.2"
+        versionCode = 7
+        versionName = "1.4.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")

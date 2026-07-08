@@ -133,7 +133,7 @@
     <string name="capture_failed">Hindi makakuha ng larawan.</string>
     <string name="snapshot_unavailable_warning">Available ang resulta, pero hindi ma-save ang larawan nito sa device na ito.</string>
     <string name="no_supported_disease_found">Walang suportadong sakit ng talong na nakita sa larawang ito. Subukan ang mas malapit at maliwanag na larawan.</string>
-    <string name="detection_box_description">%1$s, kumpiyansa %2$d%%</string>
+    <string name="detection_box_description">Natukoy ang %1$s</string>
     <string name="analyzing">Sinusuri…</string>
     <string name="analyzing_detection">Sinusuri ang natukoy na bahagi</string>
     <string name="hold_for_live_preview">Pindutin nang matagal para sa live preview</string>

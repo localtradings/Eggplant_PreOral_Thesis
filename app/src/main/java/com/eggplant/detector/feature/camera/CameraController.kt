@@ -325,7 +325,7 @@ class CameraController(
         val captureResolutionSelector = ResolutionSelector.Builder()
             .setResolutionStrategy(
                 ResolutionStrategy(
-                    Size(1280, 960),
+                    Size(1024, 768),
                     ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
                 ),
             )
@@ -365,6 +365,7 @@ class CameraController(
             if (closed || paused || token == 0L || engine.state != EngineState.READY) return
             if (now - lastLiveAnalyzeStartedMillis < LIVE_FRAME_THROTTLE_MILLIS) return
             lastLiveAnalyzeStartedMillis = now
+            val conversionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer.duplicate().apply { rewind() }
             val rgba = ByteArray(buffer.remaining()).also(buffer::get)
@@ -383,6 +384,7 @@ class CameraController(
                 source = InputSource.LIVE,
                 sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
             )
+            val conversionMillis = (SystemClock.elapsedRealtimeNanos() - conversionStartedAtNanos) / 1_000_000
             val rawDetection = engine.detect(rgbFrame).getOrThrow()
             if (!isCurrentLiveRequest(token)) return
             val detection = gateDetections(rawDetection)
@@ -393,6 +395,7 @@ class CameraController(
                 analyzeFinishedAtMillis = SystemClock.elapsedRealtime(),
                 detection = detection,
                 stability = stability,
+                conversionMillis = conversionMillis,
             )
             val scene = CameraScene(rgbFrame, detection, stability)
             latestScene = scene
@@ -447,6 +450,7 @@ class CameraController(
         rotationDegrees: Int = 0,
     ): CameraScene {
         check(engine.state == EngineState.READY) { "Detection model is unavailable." }
+        val startedAtNanos = SystemClock.elapsedRealtimeNanos()
         val unrotated = bitmap.toRgbFrame(source)
         val rotated = CameraFrameConverter.rotateRgb(
             unrotated.rgbBytes,
@@ -460,8 +464,18 @@ class CameraController(
             rgbBytes = rotated.rgbBytes,
             sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
         )
+        val conversionMillis = (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000
         val rawDetection = engine.detect(rgb).getOrThrow()
         val detection = gateDetections(rawDetection)
+        if (BuildConfig.DEBUG) {
+            val totalMillis = (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000
+            Log.d(
+                LOG_TAG,
+                "still_latency source=$source frame=${rgb.width}x${rgb.height} " +
+                    "conversion_ms=$conversionMillis inference_ms=${detection.inferenceMillis} " +
+                    "total_ms=$totalMillis detections=${detection.detections.size}",
+            )
+        }
         val diseases = detection.detections.filterNot { it.modelClass.isHealthy }
         val status = when {
             diseases.isNotEmpty() -> DetectionStatus.DISEASE_DETECTED
@@ -518,6 +532,7 @@ class CameraController(
         analyzeFinishedAtMillis: Long,
         detection: DetectionFrame,
         stability: StabilityResult,
+        conversionMillis: Long,
     ) {
         if (!BuildConfig.DEBUG || token != liveToken.get()) return
         val startedAt = liveStartedAtMillis
@@ -528,7 +543,8 @@ class CameraController(
                 LOG_TAG,
                 "live_first_frame_latency_ms=${analyzeFinishedAtMillis - startedAt} " +
                     "analysis_queue_ms=${analyzeStartedAtMillis - startedAt} " +
-                    "inference_ms=${detection.inferenceMillis} detections=${detection.detections.size}",
+                    "conversion_ms=$conversionMillis inference_ms=${detection.inferenceMillis} " +
+                    "detections=${detection.detections.size}",
             )
         }
         if (!liveFirstFeedbackLogged && stability.status != DetectionStatus.SEARCHING) {

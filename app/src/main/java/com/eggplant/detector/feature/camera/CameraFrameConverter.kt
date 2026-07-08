@@ -7,6 +7,9 @@ data class RotatedRgb(
 )
 
 object CameraFrameConverter {
+    /**
+     * CameraX RGBA_8888 exposes one plane in red, green, blue, alpha byte order.
+     */
     fun rgbaToRgb(
         rgbaBytes: ByteArray,
         width: Int,

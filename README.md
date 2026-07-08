@@ -45,9 +45,9 @@ Database rows retain stable disease IDs and grouped detections:
 - timestamp
 - model version
 
-The packaged FP16 NCNN model is checksum-verified before loading. Live preview uses latest-frame backpressure and confirms boxes after two matching frames over at least 400 ms, with a brief 750 ms hold to reduce flicker while framing.
+The packaged FP16 NCNN model is checksum-verified before loading. Live preview uses latest-frame backpressure, can render tentative boxes from the first accepted frame, and confirms boxes after two matching frames over at least 400 ms with a brief 750 ms hold to reduce flicker while framing.
 
-The current runtime uses a `0.15` confidence threshold for the exported NCNN score distribution, keeps Gallery/capture no-match states visible on the Result screen, uses a preferred 1024×768 upright live-analysis stream and 1280×960 still capture stream, preprocesses frames for the approved 768×768 model input, and defaults to CPU inference for consistent mobile behavior.
+The current runtime uses a `0.12` base confidence threshold for the exported NCNN score distribution, keeps Gallery/capture no-match states visible on the Result screen, uses a preferred 1024×768 live-analysis and still-capture stream, caps Gallery decode to a 1024 px long edge, preprocesses frames for the approved 768×768 model input, and defaults to bounded CPU inference for consistent mobile behavior.
 
 ## Validation Boundary
 

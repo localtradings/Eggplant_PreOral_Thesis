@@ -67,7 +67,6 @@ internal fun DetectionOverlay(
                 stringResource(
                     R.string.detection_box_description,
                     displayName(detection),
-                    (detection.confidence * 100).roundToInt(),
                 )
             } else {
                 stringResource(R.string.analyzing_detection)

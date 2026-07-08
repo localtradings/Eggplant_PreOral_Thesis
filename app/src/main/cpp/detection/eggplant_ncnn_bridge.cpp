@@ -17,6 +17,7 @@ namespace {
 
 constexpr float kNmsThreshold = 0.45f;
 constexpr int kMaxDetections = 100;
+constexpr int kMaximumCpuInferenceThreads = 4;
 
 struct Proposal {
     int class_index;
@@ -36,24 +37,33 @@ struct Engine {
 std::mutex gpu_mutex;
 bool gpu_initialized = false;
 
+int bounded_inference_thread_count() {
+    const int cpu_count = std::max(1, ncnn::get_cpu_count());
+    const int half_cpu_count = std::max(1, cpu_count / 2);
+    return std::min(half_cpu_count, kMaximumCpuInferenceThreads);
+}
+
 void configure_stable_cpu_runtime() {
     // The packaged NCNN runtime contains LLVM OpenMP. On Android, CPU affinity
-    // can change between camera sessions; keep OpenMP out of topology/affinity
-    // setup so the second scan cannot abort the whole process in native code.
-    setenv("OMP_NUM_THREADS", "1", 1);
-    setenv("OMP_THREAD_LIMIT", "1", 1);
+    // can change between camera sessions; keep affinity disabled, but allow a
+    // small bounded worker pool so the 768px model does not run single-threaded.
+    const int inference_threads = bounded_inference_thread_count();
+    const std::string thread_count = std::to_string(inference_threads);
+    setenv("OMP_NUM_THREADS", thread_count.c_str(), 1);
+    setenv("OMP_THREAD_LIMIT", thread_count.c_str(), 1);
     setenv("OMP_DYNAMIC", "FALSE", 1);
+    setenv("OMP_WAIT_POLICY", "PASSIVE", 1);
     setenv("OMP_PROC_BIND", "FALSE", 1);
     setenv("KMP_AFFINITY", "disabled", 1);
     setenv("KMP_BLOCKTIME", "0", 1);
     unsetenv("OMP_PLACES");
-    ncnn::set_omp_num_threads(1);
+    ncnn::set_omp_num_threads(inference_threads);
     ncnn::set_omp_dynamic(0);
     ncnn::set_kmp_blocktime(0);
 }
 
 void configure_stable_cpu_options(ncnn::Option& options) {
-    options.num_threads = 1;
+    options.num_threads = bounded_inference_thread_count();
     options.openmp_blocktime = 0;
 }
 

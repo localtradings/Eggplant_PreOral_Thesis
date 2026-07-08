@@ -15,8 +15,8 @@ internal fun Context.decodeGalleryBitmap(uri: Uri): Bitmap {
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val maxDimension = maxOf(info.size.width, info.size.height)
-            if (maxDimension > 1600) {
-                val scale = 1600f / maxDimension
+            if (maxDimension > MAX_DECODED_IMAGE_DIMENSION) {
+                val scale = MAX_DECODED_IMAGE_DIMENSION.toFloat() / maxDimension
                 decoder.setTargetSize((info.size.width * scale).roundToInt(), (info.size.height * scale).roundToInt())
             }
         }
@@ -26,7 +26,7 @@ internal fun Context.decodeGalleryBitmap(uri: Uri): Bitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var sample = 1
-        while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > 1600) sample *= 2
+        while (maxOf(bounds.outWidth / sample, bounds.outHeight / sample) > MAX_DECODED_IMAGE_DIMENSION) sample *= 2
         val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
             ?: error("Selected image could not be decoded.")
         val orientation = contentResolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
@@ -42,3 +42,5 @@ internal fun Context.decodeGalleryBitmap(uri: Uri): Bitmap {
     }
     return if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false).also { bitmap.recycle() }
 }
+
+private const val MAX_DECODED_IMAGE_DIMENSION = 1024
