@@ -36,6 +36,33 @@ struct Engine {
 std::mutex gpu_mutex;
 bool gpu_initialized = false;
 
+void configure_stable_cpu_runtime() {
+    // The packaged NCNN runtime contains LLVM OpenMP. On Android, CPU affinity
+    // can change between camera sessions; keep OpenMP out of topology/affinity
+    // setup so the second scan cannot abort the whole process in native code.
+    setenv("OMP_NUM_THREADS", "1", 1);
+    setenv("OMP_THREAD_LIMIT", "1", 1);
+    setenv("OMP_DYNAMIC", "FALSE", 1);
+    setenv("OMP_PROC_BIND", "FALSE", 1);
+    setenv("KMP_AFFINITY", "disabled", 1);
+    setenv("KMP_BLOCKTIME", "0", 1);
+    unsetenv("OMP_PLACES");
+    ncnn::set_omp_num_threads(1);
+    ncnn::set_omp_dynamic(0);
+    ncnn::set_kmp_blocktime(0);
+}
+
+void configure_stable_cpu_options(ncnn::Option& options) {
+    options.num_threads = 1;
+    options.openmp_blocktime = 0;
+    options.use_fp16_packed = false;
+    options.use_fp16_storage = false;
+    options.use_fp16_arithmetic = false;
+    options.use_bf16_packed = false;
+    options.use_bf16_storage = false;
+    options.use_packing_layout = false;
+}
+
 void ensure_gpu_instance() {
     std::lock_guard<std::mutex> lock(gpu_mutex);
     if (!gpu_initialized) {
@@ -86,13 +113,10 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_create(
     auto* engine = new Engine();
     engine->input_size = input_size;
     engine->class_count = class_count;
+    configure_stable_cpu_runtime();
     if (use_vulkan == JNI_TRUE) ensure_gpu_instance();
+    configure_stable_cpu_options(engine->net.opt);
     engine->net.opt.use_vulkan_compute = use_vulkan == JNI_TRUE && ncnn::get_gpu_count() > 0;
-    // Android emulator/device lifecycle transitions can change CPU affinity while
-    // OpenMP is lazily initializing. Keep NCNN deterministic and crash-safe; the
-    // Kotlin side already serializes calls on a dedicated executor.
-    engine->net.opt.num_threads = 1;
-    engine->net.opt.openmp_blocktime = 0;
     const std::string param = to_string(env, param_path);
     const std::string weights = to_string(env, bin_path);
     if (param.empty() || weights.empty() ||
@@ -119,6 +143,8 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
         env->GetArrayLength(rgb_bytes) != width * height * 3) {
         return env->NewFloatArray(0);
     }
+
+    configure_stable_cpu_runtime();
 
     jboolean copied = JNI_FALSE;
     auto* pixels = reinterpret_cast<unsigned char*>(env->GetByteArrayElements(rgb_bytes, &copied));
@@ -166,7 +192,7 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     ncnn::Extractor extractor = engine->net.create_extractor();
     extractor.input("in0", input);
     ncnn::Mat output;
-    if (extractor.extract("out0", output) != 0 || output.h != 4 + engine->class_count) {
+    if (extractor.extract("out0", output, 1) != 0 || output.h != 4 + engine->class_count) {
         return env->NewFloatArray(0);
     }
 
@@ -244,13 +270,7 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_destroy(JNIEnv*, jobj
 }
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM*, void*) {
-    // Android may change a process CPU mask while instrumentation or lifecycle
-    // transitions are active. LLVM OpenMP core pinning can abort in that state;
-    // NCNN still uses its configured worker count without processor binding.
-    setenv("KMP_AFFINITY", "disabled", 1);
-    setenv("OMP_PROC_BIND", "false", 1);
-    setenv("OMP_PLACES", "threads", 1);
-    setenv("KMP_BLOCKTIME", "0", 1);
+    configure_stable_cpu_runtime();
     return JNI_VERSION_1_6;
 }
 

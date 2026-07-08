@@ -6,10 +6,9 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.eggplant.detector.R
+import com.eggplant.detector.detection.api.DetectionFrame
 import com.eggplant.detector.detection.api.EngineState
 import com.eggplant.detector.detection.api.InputSource
-import com.eggplant.detector.detection.ncnn.ModelMetadata
-import com.eggplant.detector.detection.ncnn.NcnnDetectionEngine
 import com.eggplant.detector.detection.api.RgbFrame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,7 +20,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NcnnDetectionEngineInstrumentedTest {
     @Test
-    fun packagedModelLoadsAndRunsARealImageThroughNativeNcnn() {
+    fun packagedModelSurvivesSequentialInferenceAndEngineReinitialization() {
         assumeTrue(
             "Run separately with -Pandroid.testInstrumentationRunnerArguments.realModel=true",
             InstrumentationRegistry.getArguments().getString("realModel") == "true",
@@ -46,33 +45,37 @@ class NcnnDetectionEngineInstrumentedTest {
 
         try {
             assertEquals(EngineState.READY, engine.initialize())
-            val result = engine.detect(
-                RgbFrame(
-                    width = width,
-                    height = height,
-                    rgbBytes = rgb,
-                    timestampMillis = 1L,
-                    source = InputSource.GALLERY,
-                    sceneToken = 1L,
-                ),
-            ).getOrThrow()
-
-            assertTrue(result.inferenceMillis >= 0L)
-            assertFalse("The packaged positive fixture must produce a detection.", result.detections.isEmpty())
-            assertTrue(
-                "The positive leaf fixture must include Leaf-Spot.",
-                result.detections.any { it.modelClass.diseaseId == "leaf-spot" },
-            )
-            assertTrue(result.detections.all { it.modelClass in ModelMetadata.EGGPLANT_YOLO26M.classes })
+            assertPositiveLeafSpot(engine.detect(rgbFrame(width, height, rgb, 1L)).getOrThrow())
+            assertPositiveLeafSpot(engine.detect(rgbFrame(width, height, rgb, 2L)).getOrThrow())
             engine.close()
 
+            // CameraController recreation closes this wrapper, while the app
+            // intentionally retains and reuses the process-wide native model.
             engine = NcnnDetectionEngine(context, preferVulkan = false)
             assertEquals(EngineState.READY, engine.initialize())
-            assertTrue(
-                engine.detect(RgbFrame(1, 1, byteArrayOf(0, 0, 0), 2L, InputSource.GALLERY, 2L)).isSuccess,
-            )
+            assertPositiveLeafSpot(engine.detect(rgbFrame(width, height, rgb, 3L)).getOrThrow())
         } finally {
             engine.close()
         }
+    }
+
+    private fun rgbFrame(width: Int, height: Int, rgb: ByteArray, timestampMillis: Long): RgbFrame =
+        RgbFrame(
+            width = width,
+            height = height,
+            rgbBytes = rgb,
+            timestampMillis = timestampMillis,
+            source = InputSource.GALLERY,
+            sceneToken = timestampMillis,
+        )
+
+    private fun assertPositiveLeafSpot(result: DetectionFrame) {
+        assertTrue(result.inferenceMillis >= 0L)
+        assertFalse("The packaged positive fixture must produce a detection.", result.detections.isEmpty())
+        assertTrue(
+            "The positive leaf fixture must include Leaf-Spot.",
+            result.detections.any { it.modelClass.diseaseId == "leaf-spot" },
+        )
+        assertTrue(result.detections.all { it.modelClass in ModelMetadata.EGGPLANT_YOLO26M.classes })
     }
 }
