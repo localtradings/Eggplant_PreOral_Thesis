@@ -78,6 +78,32 @@ class LivePreviewSessionTest {
         assertTrue(outcome.scene.stability.saveEligible == false)
     }
 
+    @Test
+    fun `lifecycle cancellation discards an already retained live result`() {
+        val session = LivePreviewSession()
+        val token = session.start()
+        session.record(token, scene(detection(classIndex = 5, confidence = 0.91f)))
+
+        session.cancel()
+
+        assertEquals(LivePreviewOutcome.NoStableDetection, session.stop(allowHealthy = false))
+    }
+
+    @Test
+    fun `poor quality can discard retained healthy without discarding a disease`() {
+        val session = LivePreviewSession()
+        val token = session.start()
+        val healthy = detection(classIndex = 2, confidence = 0.92f)
+        val disease = detection(classIndex = 5, confidence = 0.83f)
+        session.record(token, scene(healthy, disease))
+
+        session.discardHealthy()
+
+        val outcome = session.stop(allowHealthy = true)
+        assertTrue(outcome is LivePreviewOutcome.Disease)
+        assertSame(disease, (outcome as LivePreviewOutcome.Disease).primary)
+    }
+
     private fun scene(
         vararg detections: DetectionBox,
         status: DetectionStatus = if (detections.any { !it.modelClass.isHealthy }) {

@@ -35,8 +35,9 @@ class DiseaseCatalogTest {
             ),
             DiseaseCatalog.diseases.map { it.name },
         )
-        assertEquals(6, DiseaseCatalog.diseases.count { it.type == DiseaseType.LEAF_DISEASE })
-        assertEquals(2, DiseaseCatalog.diseases.count { it.type == DiseaseType.FRUIT_DISEASE })
+        assertEquals(5, DiseaseCatalog.diseases.count { it.type == DiseaseType.LEAF_DISEASE })
+        assertEquals(3, DiseaseCatalog.diseases.count { it.type == DiseaseType.FRUIT_DISEASE })
+        assertEquals(DiseaseType.FRUIT_DISEASE, DiseaseCatalog.byId("melon-thrips")?.type)
     }
 
     @Test

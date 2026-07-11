@@ -78,6 +78,11 @@
     <string name="delete">Burahin</string>
     <string name="delete_shared_cloud_data">Burahin ang ibinahagi kong cloud data</string>
     <string name="delete_shared_cloud_data_body">Agad nitong aalisin sa Global Scans ang iyong mga post at ipapapila ang pagbura ng shared photos. Mananatili sa device ang offline history mo.</string>
+    <string name="cloud_deletion_idle">Walang kasalukuyang cloud deletion</string>
+    <string name="cloud_deletion_queued">Nakapila ang pagbura ng shared cloud data</string>
+    <string name="cloud_deletion_processing">Inaalis ang mga scan at binubura ang shared photos…</string>
+    <string name="cloud_deletion_completed">Nabura ang shared cloud data (%1$d scan)</string>
+    <string name="cloud_deletion_failed">Kailangang subukang muli ang cloud deletion</string>
     <string name="detection_status">Katayuan ng Pagtukoy</string>
     <string name="model_pending">YOLO26m • Offline NCNN</string>
     <string name="scan_quality_tips">Mga Payo sa Malinaw na Scan</string>
@@ -102,6 +107,9 @@
     <string name="scan_result">Resulta ng Scan</string>
     <string name="save_history">I-save sa Kasaysayan</string>
     <string name="saving_history">Sine-save…</string>
+    <string name="saved_to_history">Naka-save sa Kasaysayan</string>
+    <string name="save_history_succeeded">Naka-save sa Kasaysayan. Makikita ang scan na ito sa Aking mga Scan.</string>
+    <string name="save_history_already_saved">Nasa Aking mga Scan na ang scan na ito.</string>
     <string name="save_history_failed">Hindi ma-save ang scan na ito. Hindi nabago ang dati mong kasaysayan. Tingnan ang available na storage ng device at subukang muli.</string>
     <string name="scan_again">Mag-scan Muli</string>
     <string name="signs_detected">Mga Palatandaang Natukoy</string>
@@ -129,6 +137,10 @@
     <string name="global_scans">Global Scans</string>
     <string name="community_rankings">Ranggo ng komunidad</string>
     <string name="global_scans_empty">Wala pang naka-cache na community scan.</string>
+    <string name="global_scans_not_loaded">Hindi pa na-load ang Global Scans.</string>
+    <string name="global_scans_refresh_failed">Hindi na-refresh ang Global Scans. Ipinapakita ang ligtas na naka-cache na scan.</string>
+    <string name="load_more">Mag-load pa ng mga scan</string>
+    <string name="loading_more">Naglo-load pa ng mga scan…</string>
     <string name="shared_eggplant_photo">Ibinahaging larawan ng dahon o bunga ng talong</string>
     <string name="global_scan_confidence_published">%1$d%% kumpiyansa • %2$s</string>
     <string name="symptoms">Mga sintomas</string>
@@ -144,14 +156,24 @@
     <string name="refresh">I-refresh</string>
     <string name="last_updated_cached">Ipinapakita ang naka-cache na nilalaman</string>
     <string name="share_to_global">Ibahagi sa Global</string>
+    <string name="share_status_queued">Nakapila ang Global share. Mag-u-upload ito kapag handa ang koneksyon.</string>
+    <string name="share_status_uploading">Ina-upload ang shared scan…</string>
+    <string name="share_status_retrying">Sinusubukang muli ang Global share…</string>
+    <string name="share_status_completed">Naibahagi sa Global Scans.</string>
+    <string name="share_status_failed">Hindi maibahagi ang scan na ito. Subukang muli.</string>
+    <string name="share_status_cancelled">Nakansela ang Global share.</string>
     <string name="request_this_disease">Hilinging idagdag ang sakit na ito</string>
     <string name="requested_disease_name">Pangalan ng hinihiling na sakit</string>
+    <string name="requested_disease_name_optional">Pangalan ng hinihiling na sakit (opsyonal)</string>
+    <string name="request_name_not_provided">Walang ibinigay na pangalan</string>
     <string name="optional_notes">Opsyonal na tala</string>
+    <string name="request_notes_count">%1$d / %2$d character</string>
     <string name="submit_request">Ipasa ang request</string>
     <string name="real_photo_required">Pribadong ipapasa ang tunay na larawan ng halaman mula sa resultang ito. Hindi ito ipo-post o gagamitin sa training.</string>
     <string name="request_photo_count">%1$d sa %2$d tunay na larawan ang napili</string>
     <string name="add_request_photos">Magdagdag mula sa gallery</string>
     <string name="adding_photos">Nagdaragdag ng mga larawan…</string>
+    <string name="request_camera_only_photo">Tanging tunay na larawang kinunan sa app na ito ang tatanggapin. Hindi maaaring isumite ang gallery photos.</string>
     <string name="retry">Subukan muli</string>
 
     <string name="capture_scan">Kumuha ng scan</string>

@@ -1,9 +1,6 @@
 package com.eggplant.detector.feature.result
 
 import android.graphics.BitmapFactory
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -65,6 +62,8 @@ import com.eggplant.detector.app.SaveState
 import com.eggplant.detector.app.ResultWarning
 import com.eggplant.detector.app.SnapshotState
 import com.eggplant.detector.app.CloudActionState
+import com.eggplant.detector.domain.model.SyncOutboxEvent
+import com.eggplant.detector.domain.model.SyncOutboxState
 import com.eggplant.detector.core.ui.components.ConfidenceDisplay
 import com.eggplant.detector.core.ui.components.PrimaryButton
 import com.eggplant.detector.core.ui.components.ResultArtwork
@@ -94,15 +93,16 @@ fun DetectionResultScreen(
     val resultWarning by viewModel.resultWarning.collectAsState()
     val snapshotState by viewModel.snapshotState.collectAsState()
     val cloudAction by viewModel.cloudActionState.collectAsState()
+    val outboxEvents by viewModel.syncOutboxEvents.collectAsState()
     val requestDraft by viewModel.diseaseRequestDraft.collectAsState()
     var showShareDialog by remember { mutableStateOf(false) }
     var showRequestDialog by remember { mutableStateOf(false) }
     var requestedName by remember { mutableStateOf("") }
     var requestNotes by remember { mutableStateOf("") }
     var rightsConsent by remember { mutableStateOf(false) }
-    val requestPhotoPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 2),
-    ) { uris -> viewModel.addDiseaseRequestPhotos(uris) }
+    val shareEvent = result?.let { current ->
+        outboxEvents.firstOrNull { it.idempotencyKey == "global:${current.id}" }
+    }
     ResultReport(
         result = result,
         title = title,
@@ -129,20 +129,51 @@ fun DetectionResultScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
+            if (saveState == SaveState.SAVED && result?.outcome == ScanOutcome.DISEASE) {
+                Text(
+                    stringResource(R.string.save_history_succeeded),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (saveState == SaveState.ALREADY_SAVED && result?.outcome == ScanOutcome.DISEASE) {
+                Text(
+                    stringResource(R.string.save_history_already_saved),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             if (result?.outcome == ScanOutcome.DISEASE) {
                 PrimaryButton(
-                    text = if (saveState == SaveState.SAVING) stringResource(R.string.saving_history) else stringResource(R.string.save_history),
+                    text = when (saveState) {
+                        SaveState.SAVING -> stringResource(R.string.saving_history)
+                        SaveState.SAVED, SaveState.ALREADY_SAVED -> stringResource(R.string.saved_to_history)
+                        else -> stringResource(R.string.save_history)
+                    },
                     onClick = onSave,
                     icon = Icons.Outlined.CheckCircle,
-                    enabled = saveState != SaveState.SAVING && snapshotState != SnapshotState.PREPARING,
+                    enabled = saveState !in setOf(SaveState.SAVING, SaveState.SAVED, SaveState.ALREADY_SAVED) && snapshotState != SnapshotState.PREPARING,
                 )
                 if (result?.confidence ?: 0 >= 50 && result?.source != "gallery") {
                     OutlinedButton(
                         onClick = { showShareDialog = true },
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         shape = RoundedCornerShape(18.dp),
-                        enabled = snapshotState == SnapshotState.READY && cloudAction != CloudActionState.Working,
+                        enabled = snapshotState == SnapshotState.READY && cloudAction != CloudActionState.Working && !shareEvent.isInFlight(),
                     ) { Text(stringResource(R.string.share_to_global)) }
+                }
+                shareEvent?.let { event ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            shareStatusLabel(event),
+                            color = if (event.state == SyncOutboxState.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (event.state in setOf(SyncOutboxState.FAILED, SyncOutboxState.RETRY)) {
+                            TextButton(onClick = { viewModel.retryOutboxEvent(event.id) }) { Text(stringResource(R.string.retry)) }
+                        }
+                    }
                 }
             }
             if (result?.outcome == ScanOutcome.NO_MATCH) {
@@ -208,23 +239,25 @@ fun DetectionResultScreen(
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    OutlinedButton(
-                        onClick = {
-                            requestPhotoPicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                            )
-                        },
-                        enabled = requestDraft.photoPaths.size < 3 && !requestDraft.addingPhotos,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (requestDraft.addingPhotos) stringResource(R.string.adding_photos)
-                            else stringResource(R.string.add_request_photos),
-                        )
-                    }
+                    Text(
+                        stringResource(R.string.request_camera_only_photo),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                     requestDraft.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    OutlinedTextField(requestedName, { requestedName = it.take(120) }, label = { Text(stringResource(R.string.requested_disease_name)) }, singleLine = true)
-                    OutlinedTextField(requestNotes, { requestNotes = it.take(2000) }, label = { Text(stringResource(R.string.optional_notes)) }, minLines = 2)
+                    OutlinedTextField(
+                        requestedName,
+                        { requestedName = it.take(120) },
+                        label = { Text(stringResource(R.string.requested_disease_name_optional)) },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        requestNotes,
+                        { requestNotes = it.take(200) },
+                        label = { Text(stringResource(R.string.optional_notes)) },
+                        supportingText = { Text(stringResource(R.string.request_notes_count, requestNotes.length, 200)) },
+                        minLines = 2,
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(rightsConsent, { rightsConsent = it })
                         Text(localized("I own this photo or have permission to submit it.", "Ako ang may-ari ng larawan o may pahintulot akong isumite ito."))
@@ -233,8 +266,7 @@ fun DetectionResultScreen(
             },
             confirmButton = {
                 TextButton(
-                    enabled = requestedName.trim().length >= 2 && rightsConsent &&
-                        requestDraft.photoPaths.isNotEmpty() && !requestDraft.addingPhotos &&
+                    enabled = rightsConsent && requestDraft.photoPaths.isNotEmpty() &&
                         cloudAction != CloudActionState.Working,
                     onClick = {
                         viewModel.submitDiseaseRequest(
@@ -261,6 +293,22 @@ fun DetectionResultScreen(
         )
     }
 }
+
+@Composable
+private fun shareStatusLabel(event: SyncOutboxEvent): String = when (event.state) {
+    SyncOutboxState.PENDING -> stringResource(R.string.share_status_queued)
+    SyncOutboxState.UPLOADING -> stringResource(R.string.share_status_uploading)
+    SyncOutboxState.RETRY -> stringResource(R.string.share_status_retrying)
+    SyncOutboxState.COMPLETED -> stringResource(R.string.share_status_completed)
+    SyncOutboxState.FAILED -> stringResource(R.string.share_status_failed)
+    SyncOutboxState.CANCELLED -> stringResource(R.string.share_status_cancelled)
+}
+
+private fun SyncOutboxEvent?.isInFlight(): Boolean = this?.state in setOf(
+    SyncOutboxState.PENDING,
+    SyncOutboxState.UPLOADING,
+    SyncOutboxState.RETRY,
+)
 
 @Composable
 fun ResultReport(

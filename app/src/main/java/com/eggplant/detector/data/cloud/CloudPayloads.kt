@@ -33,23 +33,27 @@ internal fun sharingConsentPayload(enabled: Boolean): JsonObject = buildJsonObje
 
 internal fun diseaseRequestPayload(
     clientRequestId: String,
-    requestedName: String,
+    requestedName: String?,
     notes: String?,
     modelVersion: String,
     photoPaths: List<String>,
+    photoSources: List<String>,
     rightsConsent: Boolean,
     trainingConsent: Boolean,
 ): JsonObject = buildJsonObject {
     put("clientRequestId", clientRequestId)
-    put("requestedName", requestedName)
+    requestedName?.takeIf(String::isNotBlank)?.let { put("requestedName", it) }
     notes?.let { put("notes", it) }
     put("modelVersion", modelVersion)
     put("rightsConsent", rightsConsent)
     put("trainingConsent", trainingConsent)
     put("photoPaths", buildJsonArray { photoPaths.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
+    put("photoSources", buildJsonArray { photoSources.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
 }
 
 internal fun JsonObject.photoPaths(): List<String> = getValue("photoPaths").jsonArray.map { it.jsonPrimitive.content }
+
+internal fun JsonObject.photoSources(): List<String> = getValue("photoSources").jsonArray.map { it.jsonPrimitive.content }
 
 internal fun File.sha256(): String = inputStream().use { input ->
     val digest = MessageDigest.getInstance("SHA-256")

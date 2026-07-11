@@ -204,6 +204,30 @@ class CameraControllerInstrumentedTest {
         }
     }
 
+    @Test
+    fun lifecycleStopCancelsLiveRetentionBeforeAStaleReleaseCanRoute() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val owner = TestLifecycleOwner().apply { start() }
+        val controller = CameraController(
+            context = context,
+            lifecycleOwner = owner,
+            engine = PositiveDetectionEngine(),
+            onState = {},
+        )
+        try {
+            controller.startLivePreview()
+
+            owner.stop()
+
+            assertEquals(
+                LivePreviewOutcome.NoStableDetection,
+                controller.finishLivePreview(allowHealthy = false),
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
     private fun analyzeGallery(classIndex: Int): com.eggplant.detector.feature.camera.CameraScene {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val controller = CameraController(
@@ -242,6 +266,15 @@ class CameraControllerInstrumentedTest {
     private class TestLifecycleOwner : LifecycleOwner {
         private val registry = LifecycleRegistry(this)
         override val lifecycle: Lifecycle = registry
+
+        fun start() {
+            registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+            registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        }
+
+        fun stop() {
+            registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        }
     }
 
     private class PositiveDetectionEngine : DetectionEngine {

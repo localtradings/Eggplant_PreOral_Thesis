@@ -54,9 +54,9 @@ object DiseaseCatalog {
         Disease(
             id = "melon-thrips",
             name = "Melon Thrips",
-            type = DiseaseType.LEAF_DISEASE,
-            symptomPreview = "Silver streaks, leaf curling, and tiny insects on leaves.",
-            signs = listOf("Silvery streaks", "Curled young leaves", "Tiny insects underneath leaves"),
+            type = DiseaseType.FRUIT_DISEASE,
+            symptomPreview = "Silver streaks and tiny insects that can scar leaves, shoots, and fruit.",
+            signs = listOf("Silvery streaks", "Curled young leaves", "Bronzed or scarred fruit", "Tiny insects underneath leaves"),
             treatment = "Inspect leaves closely and ask a local agricultural specialist for an appropriate control method.",
             prevention = "Monitor young leaves regularly and keep weeds and heavily damaged leaves away from the crop.",
         ),
@@ -124,9 +124,9 @@ object DiseaseCatalog {
         Disease(
             id = "melon-thrips",
             name = "Melon Thrips",
-            type = DiseaseType.LEAF_DISEASE,
-            symptomPreview = "Pilak na guhit, pagkulot ng dahon, at maliliit na insekto.",
-            signs = listOf("Pilak na guhit", "Kulot na batang dahon", "Maliit na insekto sa ilalim"),
+            type = DiseaseType.FRUIT_DISEASE,
+            symptomPreview = "Pilak na guhit at maliliit na insektong maaaring makapinsala sa dahon, usbong, at bunga.",
+            signs = listOf("Pilak na guhit", "Kulot na batang dahon", "Bronze o peklat sa bunga", "Maliit na insekto sa ilalim ng dahon"),
             treatment = "Suriing mabuti ang dahon at humingi ng payo para sa angkop na paraan ng pagkontrol.",
             prevention = "Regular na bantayan ang batang dahon at alisin ang damo at malubhang napinsalang dahon."),
         Disease(

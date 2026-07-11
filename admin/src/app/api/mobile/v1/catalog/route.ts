@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   ] = await Promise.all([
     supabase.from("app_config").select("catalog_version").eq("id", true).single(),
     supabase.from("disease_catalog").select("id,model_class_index,model_label,category,artwork_key,content_version,updated_at").order("model_class_index"),
-    supabase.from("disease_localizations").select("disease_id,name,description,symptom_preview,causes,prevention,guidance,when_to_act,disclaimer,updated_at").eq("language_tag", languageTag),
+    supabase.from("disease_localizations").select("disease_id,name,description,symptom_preview,causes,recommended_action,prevention,guidance,when_to_act,disclaimer,updated_at").eq("language_tag", languageTag),
     supabase.from("disease_signs").select("disease_id,position,text").eq("language_tag", languageTag).order("position"),
     supabase.from("disease_references").select("disease_id,position,publisher,title,url").eq("language_tag", languageTag).order("position"),
   ]);

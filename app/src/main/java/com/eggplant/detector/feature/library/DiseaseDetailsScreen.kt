@@ -43,7 +43,7 @@ import com.eggplant.detector.core.ui.motion.LocalEggplantMotion
 import com.eggplant.detector.core.ui.stablePageForId
 
 @Composable
-fun DiseaseDetailsScreen(disease: Disease?, onBack: () -> Unit) {
+fun DiseaseDetailsScreen(disease: Disease?, onBack: () -> Unit, showTopBar: Boolean = true) {
     if (disease == null) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Text(stringResource(R.string.disease_not_found))
@@ -59,11 +59,13 @@ fun DiseaseDetailsScreen(disease: Disease?, onBack: () -> Unit) {
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+        if (showTopBar) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                }
+                Text(stringResource(R.string.disease_detail), style = MaterialTheme.typography.titleLarge)
             }
-            Text(stringResource(R.string.disease_detail), style = MaterialTheme.typography.titleLarge)
         }
         DiseaseArtwork(disease.id, Modifier.fillMaxWidth().height(240.dp))
         Text(disease.name, style = MaterialTheme.typography.headlineMedium)
@@ -113,8 +115,38 @@ fun DiseaseDetailsPager(diseases: List<Disease>, initialId: String?, onBack: () 
         if (motion.spatialMovement) pager.animateScrollToPage(page) else pager.scrollToPage(page)
     }
     Column(Modifier.fillMaxSize()) {
-        Text(stringResource(R.string.item_position, pager.currentPage + 1, diseases.size), Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
-        HorizontalPager(pager, Modifier.weight(1f), key = { diseases[it].id }) { page -> DiseaseDetailsScreen(diseases[page], onBack) }
+        val current = diseases[pager.currentPage]
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(current.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    Text(
+                        stringResource(if (current.type.name.startsWith("LEAF")) R.string.leaf_disease else R.string.fruit_disease),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    stringResource(R.string.item_position, pager.currentPage + 1, diseases.size),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        HorizontalPager(pager, Modifier.weight(1f), key = { diseases[it].id }) { page ->
+            DiseaseDetailsScreen(diseases[page], onBack, showTopBar = false)
+        }
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton({ moveTo(pager.currentPage - 1) }, Modifier.weight(1f), enabled = pager.currentPage > 0) { Text(stringResource(R.string.previous)) }
             OutlinedButton({ moveTo(pager.currentPage + 1) }, Modifier.weight(1f), enabled = pager.currentPage < diseases.lastIndex) { Text(stringResource(R.string.next)) }

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.eggplant.detector.feature.camera.CameraScene
 import com.eggplant.detector.data.catalog.DiseaseCatalog
+import com.eggplant.detector.data.catalog.DiseaseContentResolver
 import com.eggplant.detector.data.repository.EggplantRepository
 import com.eggplant.detector.data.database.entity.AppSettingsEntity
 import com.eggplant.detector.detection.api.DetectionBox
@@ -19,9 +20,11 @@ import com.eggplant.detector.domain.model.GlobalRanking
 import com.eggplant.detector.domain.model.DiseaseRequest
 import com.eggplant.detector.domain.model.MotionPreference
 import com.eggplant.detector.domain.model.ShareEligibility
+import com.eggplant.detector.domain.model.CloudDeletionState
+import com.eggplant.detector.domain.model.GlobalFeedState
+import com.eggplant.detector.domain.model.SyncOutboxEvent
 import java.time.LocalDateTime
 import java.util.UUID
-import android.net.Uri
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +47,8 @@ enum class LanguagePreference(val languageTag: String, val displayName: String) 
 enum class SaveState {
     IDLE,
     SAVING,
+    SAVED,
+    ALREADY_SAVED,
     FAILED,
 }
 
@@ -62,8 +67,7 @@ sealed interface CloudActionState {
 
 data class DiseaseRequestDraftState(
     val photoPaths: List<String> = emptyList(),
-    val importedPhotoPaths: List<String> = emptyList(),
-    val addingPhotos: Boolean = false,
+    val photoSources: List<String> = emptyList(),
     val error: String? = null,
 )
 
@@ -127,6 +131,9 @@ class EggplantAppViewModel(
     private val _globalRankings = MutableStateFlow<List<GlobalRanking>>(emptyList())
     val globalRankings: StateFlow<List<GlobalRanking>> = _globalRankings.asStateFlow()
 
+    private val _globalFeedState = MutableStateFlow(GlobalFeedState())
+    val globalFeedState: StateFlow<GlobalFeedState> = _globalFeedState.asStateFlow()
+
     private val _diseaseRequests = MutableStateFlow<List<DiseaseRequest>>(emptyList())
     val diseaseRequests: StateFlow<List<DiseaseRequest>> = _diseaseRequests.asStateFlow()
 
@@ -139,11 +146,18 @@ class EggplantAppViewModel(
     private val _cloudActionState = MutableStateFlow<CloudActionState>(CloudActionState.Idle)
     val cloudActionState: StateFlow<CloudActionState> = _cloudActionState.asStateFlow()
 
+    private val _cloudDeletionState = MutableStateFlow<CloudDeletionState>(CloudDeletionState.Idle)
+    val cloudDeletionState: StateFlow<CloudDeletionState> = _cloudDeletionState.asStateFlow()
+
+    private val _syncOutboxEvents = MutableStateFlow<List<SyncOutboxEvent>>(emptyList())
+    val syncOutboxEvents: StateFlow<List<SyncOutboxEvent>> = _syncOutboxEvents.asStateFlow()
+
     private val _diseaseRequestDraft = MutableStateFlow(DiseaseRequestDraftState())
     val diseaseRequestDraft: StateFlow<DiseaseRequestDraftState> = _diseaseRequestDraft.asStateFlow()
 
     private var persistedSettings = AppSettingsEntity()
     private val autoSaveDeduplicator = AutoSaveDeduplicator()
+    private var liveFinalizationId: String? = null
 
     init {
         repository?.let { localRepository ->
@@ -180,6 +194,9 @@ class EggplantAppViewModel(
             }
             viewModelScope.launch { localRepository.globalScans.collect { _globalScans.value = it } }
             viewModelScope.launch { localRepository.globalRankings.collect { _globalRankings.value = it } }
+            viewModelScope.launch { localRepository.globalFeedState.collect { _globalFeedState.value = it } }
+            viewModelScope.launch { localRepository.cloudDeletionState.collect { _cloudDeletionState.value = it } }
+            viewModelScope.launch { localRepository.syncOutboxEvents.collect { _syncOutboxEvents.value = it } }
             viewModelScope.launch { localRepository.diseaseRequests.collect { _diseaseRequests.value = it } }
         }
     }
@@ -223,6 +240,89 @@ class EggplantAppViewModel(
                 if (imagePath != null) {
                     autoSaveIfEligible(readyResult, scene.stability.saveEligible, scene.rgbFrame.sceneToken)
                 }
+            }
+        }
+    }
+
+    /**
+     * Called only when the long-press live session is released with a retained
+     * result. The Result route opens immediately; snapshot staging and the
+     * required local save continue in this ViewModel scope so releasing the
+     * shutter can never make the valid scan disappear or add avoidable latency.
+     */
+    fun finalizeLiveDetectionScene(
+        scene: CameraScene,
+        primary: DetectionBox,
+        onReady: () -> Unit = {},
+    ) {
+        if (liveFinalizationId != null) return
+        _saveState.value = SaveState.IDLE
+        _cloudActionState.value = CloudActionState.Idle
+        _resultWarning.value = null
+        val pendingResult = scene.toScanResult(
+            primary,
+            imagePath = null,
+            _catalog.value,
+            nowProvider(),
+            _languagePreference.value.languageTag,
+        )
+        val finalizationId = pendingResult.id
+        liveFinalizationId = finalizationId
+        _currentResult.value = pendingResult
+        val stageSnapshot = snapshotStager ?: repository?.let { repo ->
+            suspend { frame: com.eggplant.detector.detection.api.RgbFrame -> repo.stageSnapshot(frame) }
+        }
+        _snapshotState.value = if (stageSnapshot == null) SnapshotState.UNAVAILABLE else SnapshotState.PREPARING
+        if (stageSnapshot == null) _resultWarning.value = ResultWarning.SNAPSHOT_UNAVAILABLE
+
+        // Keep the no-storage/no-repository path deterministic for previews
+        // and JVM tests. Production always has a repository and follows the
+        // asynchronous snapshot + Room transaction below.
+        if (stageSnapshot == null && scanSaver == null) {
+            if (pendingResult.outcome == ScanOutcome.DISEASE) {
+                commitSavedResult(pendingResult.copy(scannedAt = nowProvider(), saveMode = "LIVE"), SaveState.SAVED)
+            }
+            completeLiveFinalization(finalizationId, onReady)
+            return
+        }
+
+        // Result navigation never waits for JPEG staging or a Room transaction.
+        // The Result screen receives PREPARING/SAVING state rather than a silent
+        // delay, while the retained live result is still committed below.
+        _saveState.value = if (pendingResult.outcome == ScanOutcome.DISEASE) SaveState.SAVING else SaveState.IDLE
+        onReady()
+        viewModelScope.launch {
+            val imagePath = stageSnapshot?.let { stage ->
+                runCatching { stage(scene.rgbFrame) }
+                    .onFailure { _resultWarning.value = ResultWarning.SNAPSHOT_UNAVAILABLE }
+                    .getOrNull()
+            }
+            if (liveFinalizationId != finalizationId) {
+                repository?.discardSnapshot(imagePath)
+                return@launch
+            }
+            val readyResult = pendingResult.copy(imagePath = imagePath)
+            _currentResult.value = readyResult
+            _snapshotState.value = if (imagePath == null) SnapshotState.UNAVAILABLE else SnapshotState.READY
+
+            // Healthy live findings can still reach their result screen, but
+            // never become a disease-history record.
+            if (readyResult.outcome != ScanOutcome.DISEASE) {
+                completeLiveFinalization(finalizationId)
+                return@launch
+            }
+
+            try {
+                val committed = scanSaver?.invoke(readyResult.copy(scannedAt = nowProvider(), saveMode = "LIVE"))
+                    ?: readyResult.copy(scannedAt = nowProvider(), saveMode = "LIVE")
+                if (liveFinalizationId == finalizationId) commitSavedResult(committed, SaveState.SAVED)
+            } catch (_: Exception) {
+                if (liveFinalizationId == finalizationId) {
+                    repository?.discardSnapshot(imagePath)
+                    _saveState.value = SaveState.FAILED
+                }
+            } finally {
+                completeLiveFinalization(finalizationId)
             }
         }
     }
@@ -279,7 +379,11 @@ class EggplantAppViewModel(
             _snapshotState.value == SnapshotState.PREPARING ||
             _history.value.any { it.id == result.id }
         ) {
-            if (result == null) _saveState.value = SaveState.FAILED
+            _saveState.value = when {
+                result == null -> SaveState.FAILED
+                _history.value.any { it.id == result.id } -> SaveState.ALREADY_SAVED
+                else -> SaveState.FAILED
+            }
             onComplete(false)
             return false
         }
@@ -287,7 +391,7 @@ class EggplantAppViewModel(
         val savedResult = result.copy(scannedAt = nowProvider())
         val persist = scanSaver
         if (persist == null) {
-            commitSavedResult(savedResult)
+            commitSavedResult(savedResult, SaveState.SAVED)
             onComplete(true)
             return true
         }
@@ -295,7 +399,7 @@ class EggplantAppViewModel(
         _saveState.value = SaveState.SAVING
         viewModelScope.launch {
             try {
-                commitSavedResult(persist(savedResult))
+                commitSavedResult(persist(savedResult), SaveState.SAVED)
                 onComplete(true)
             } catch (_: Exception) {
                 _saveState.value = SaveState.FAILED
@@ -305,13 +409,13 @@ class EggplantAppViewModel(
         return true
     }
 
-    private fun commitSavedResult(result: ScanResult) {
+    private fun commitSavedResult(result: ScanResult, completedState: SaveState = SaveState.SAVED) {
         if (_history.value.none { it.id == result.id }) {
             _history.value = listOf(result) + _history.value
         }
         _currentResult.value = result
         _lastScan.value = result
-        _saveState.value = SaveState.IDLE
+        _saveState.value = completedState
     }
 
     private suspend fun autoSaveIfEligible(result: ScanResult, stable: Boolean, sceneToken: Long) {
@@ -322,7 +426,7 @@ class EggplantAppViewModel(
         try {
             val committed = scanSaver?.invoke(autoResult) ?: autoResult
             autoSaveDeduplicator.record(committed, sceneToken)
-            commitSavedResult(committed)
+            commitSavedResult(committed, SaveState.SAVED)
         } catch (_: Exception) {
             _saveState.value = SaveState.FAILED
         }
@@ -361,6 +465,11 @@ class EggplantAppViewModel(
     }
 
     fun setGlobalSharing(enabled: Boolean) {
+        if (enabled && repository?.isCloudConfigured == false) {
+            _globalSharingEnabled.value = false
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
         _globalSharingEnabled.value = enabled
         persistedSettings = persistedSettings.copy(
             globalSharingEnabled = enabled,
@@ -390,14 +499,31 @@ class EggplantAppViewModel(
     }
 
     fun refreshGlobalScans() {
+        if (repository?.isCloudConfigured == false) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
         _cloudActionState.value = CloudActionState.Working
         repository?.refreshCloud()
         _cloudActionState.value = CloudActionState.Queued("Refreshing Global Scans")
     }
 
+    fun loadMoreGlobalScans() {
+        if (_globalFeedState.value.isLoading || !_globalFeedState.value.hasMore) return
+        if (repository?.isCloudConfigured == false) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
+        repository?.loadMoreGlobalScans()
+    }
+
     fun shareCurrentResult() {
         if (_cloudActionState.value == CloudActionState.Working) return
         val localRepository = repository ?: return
+        if (!localRepository.isCloudConfigured) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
         val result = _currentResult.value ?: run {
             _cloudActionState.value = CloudActionState.Error(cloudMessage("No result is available to share.", "Walang resultang maaaring i-share."))
             return
@@ -416,53 +542,35 @@ class EggplantAppViewModel(
     }
 
     fun beginDiseaseRequest() {
-        val localRepository = repository ?: return
-        localRepository.discardDiseaseRequestDraftPhotos(_diseaseRequestDraft.value.importedPhotoPaths)
-        val photoPath = _currentResult.value?.imagePath
-        _diseaseRequestDraft.value = if (photoPath != null && java.io.File(photoPath).isFile) {
-            DiseaseRequestDraftState(photoPaths = listOf(photoPath))
+        val result = _currentResult.value
+        val photoPath = result?.imagePath
+        val source = result?.source
+        _diseaseRequestDraft.value = if (
+            photoPath != null && java.io.File(photoPath).isFile && source in CAMERA_REQUEST_SOURCES
+        ) {
+            DiseaseRequestDraftState(photoPaths = listOf(photoPath), photoSources = listOf(requireNotNull(source)))
         } else {
-            DiseaseRequestDraftState(error = cloudMessage("A real plant photo is required.", "Kailangan ang tunay na larawan ng halaman."))
-        }
-    }
-
-    fun addDiseaseRequestPhotos(uris: List<Uri>) {
-        val localRepository = repository ?: return
-        val current = _diseaseRequestDraft.value
-        val remaining = (3 - current.photoPaths.size).coerceAtLeast(0)
-        if (remaining == 0 || uris.isEmpty() || current.addingPhotos) return
-        _diseaseRequestDraft.value = current.copy(addingPhotos = true, error = null)
-        viewModelScope.launch {
-            val imported = mutableListOf<String>()
-            var failure: Throwable? = null
-            uris.take(remaining).forEach { uri ->
-                runCatching { localRepository.stageDiseaseRequestPhoto(uri) }
-                    .onSuccess(imported::add)
-                    .onFailure { if (failure == null) failure = it }
-            }
-            val latest = _diseaseRequestDraft.value
-            _diseaseRequestDraft.value = latest.copy(
-                photoPaths = (latest.photoPaths + imported).distinct().take(3),
-                importedPhotoPaths = (latest.importedPhotoPaths + imported).distinct(),
-                addingPhotos = false,
-                error = failure?.message,
-            )
+            DiseaseRequestDraftState(error = cloudMessage("Take the plant photo with the in-app camera before requesting a disease.", "Kunan muna ang halaman gamit ang in-app camera bago humiling ng disease."))
         }
     }
 
     fun cancelDiseaseRequestDraft() {
-        repository?.discardDiseaseRequestDraftPhotos(_diseaseRequestDraft.value.importedPhotoPaths)
         _diseaseRequestDraft.value = DiseaseRequestDraftState()
     }
 
     fun submitDiseaseRequest(
-        requestedName: String,
+        requestedName: String?,
         notes: String?,
         rightsConsent: Boolean,
         onComplete: (Boolean) -> Unit = {},
     ) {
         if (_cloudActionState.value == CloudActionState.Working) return
         val localRepository = repository ?: return
+        if (!localRepository.isCloudConfigured) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            onComplete(false)
+            return
+        }
         val draft = _diseaseRequestDraft.value
         if (draft.photoPaths.isEmpty()) {
             _cloudActionState.value = CloudActionState.Error(cloudMessage("A real plant photo is required.", "Kailangan ang tunay na larawan ng halaman."))
@@ -474,11 +582,20 @@ class EggplantAppViewModel(
             onComplete(false)
             return
         }
+        if (notes?.length ?: 0 > DISEASE_REQUEST_NOTES_MAX_LENGTH) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Notes must be 200 characters or fewer.", "Hanggang 200 character lamang ang notes."))
+            onComplete(false)
+            return
+        }
+        if (draft.photoSources.size != draft.photoPaths.size || draft.photoSources.any { it !in CAMERA_REQUEST_SOURCES }) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Only in-app camera photos can be submitted.", "In-app camera photos lamang ang maaaring isumite."))
+            onComplete(false)
+            return
+        }
         _cloudActionState.value = CloudActionState.Working
         viewModelScope.launch {
-            runCatching { localRepository.enqueueDiseaseRequest(requestedName, notes, draft.photoPaths, rightsConsent) }
+            runCatching { localRepository.enqueueDiseaseRequest(requestedName, notes, draft.photoPaths, draft.photoSources, rightsConsent) }
                 .onSuccess {
-                    localRepository.discardDiseaseRequestDraftPhotos(draft.importedPhotoPaths)
                     _diseaseRequestDraft.value = DiseaseRequestDraftState()
                     _cloudActionState.value = CloudActionState.Queued("Disease request queued")
                     onComplete(true)
@@ -492,6 +609,10 @@ class EggplantAppViewModel(
 
     fun retryDiseaseRequest(clientRequestId: String) {
         val localRepository = repository ?: return
+        if (!localRepository.isCloudConfigured) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
         viewModelScope.launch {
             runCatching { localRepository.retryDiseaseRequest(clientRequestId) }
                 .onFailure { _cloudActionState.value = CloudActionState.Error(it.message ?: "Could not retry request") }
@@ -506,10 +627,26 @@ class EggplantAppViewModel(
         }
     }
 
+    fun retryOutboxEvent(eventId: String) {
+        val localRepository = repository ?: return
+        if (!localRepository.isCloudConfigured) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { localRepository.retryOutboxEvent(eventId) }
+                .onFailure { _cloudActionState.value = CloudActionState.Error(it.message ?: "Could not retry cloud work") }
+        }
+    }
+
     fun clearCloudActionState() { _cloudActionState.value = CloudActionState.Idle }
 
     fun reportGlobalScan(scanId: String) {
         val localRepository = repository ?: return
+        if (!localRepository.isCloudConfigured) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
         _cloudActionState.value = CloudActionState.Working
         viewModelScope.launch {
             runCatching { localRepository.enqueueContentReport(scanId, "incorrect_result") }
@@ -520,12 +657,22 @@ class EggplantAppViewModel(
 
     fun deleteSharedCloudData() {
         val localRepository = repository ?: return
+        if (!localRepository.isCloudConfigured) {
+            _cloudActionState.value = CloudActionState.Error(cloudMessage("Cloud is unavailable in this build.", "Hindi available ang cloud sa build na ito."))
+            return
+        }
         _cloudActionState.value = CloudActionState.Working
         viewModelScope.launch {
             runCatching { localRepository.enqueueCloudDeletion() }
                 .onSuccess { _cloudActionState.value = CloudActionState.Queued("Cloud deletion queued") }
                 .onFailure { _cloudActionState.value = CloudActionState.Error(it.message ?: "Could not queue deletion") }
         }
+    }
+
+    private fun completeLiveFinalization(finalizationId: String, onReady: (() -> Unit)? = null) {
+        if (liveFinalizationId != finalizationId) return
+        liveFinalizationId = null
+        onReady?.invoke()
     }
 
     fun markNotificationRead(key: String) {
@@ -571,6 +718,9 @@ class EggplantAppViewModel(
     }
 }
 
+private const val DISEASE_REQUEST_NOTES_MAX_LENGTH = 200
+private val CAMERA_REQUEST_SOURCES = setOf("live", "capture")
+
 private fun CameraScene.toScanResult(
     primary: DetectionBox,
     imagePath: String?,
@@ -583,7 +733,7 @@ private fun CameraScene.toScanResult(
     }
     val primaryDiseaseId = primary.modelClass.diseaseId
     val primaryDisease = primaryDiseaseId?.let { diseaseId ->
-        catalog.firstOrNull { it.id == diseaseId } ?: DiseaseCatalog.byId(diseaseId)
+        DiseaseContentResolver.resolve(diseaseId, catalog, languageTag)
     }
     val primaryName = primaryDisease?.name ?: if (primary.modelClass.isHealthy) {
         healthyDisplayName(primary.modelClass.index, languageTag)
@@ -612,8 +762,7 @@ private fun CameraScene.toScanResult(
             ScanDetectionResult(
                 id = "detection-$index-${UUID.randomUUID()}",
                 diseaseId = diseaseId,
-                name = catalog.firstOrNull { it.id == diseaseId }?.name
-                    ?: DiseaseCatalog.byId(diseaseId)?.name
+                name = DiseaseContentResolver.resolve(diseaseId, catalog, languageTag)?.name
                     ?: if (detection.modelClass.isHealthy) {
                         healthyDisplayName(detection.modelClass.index, languageTag)
                     } else {

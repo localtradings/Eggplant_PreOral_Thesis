@@ -48,6 +48,7 @@ import com.eggplant.detector.app.ThemePreference
 import com.eggplant.detector.core.ui.components.SettingsRow
 import com.eggplant.detector.core.ui.components.SettingsSwitchRow
 import com.eggplant.detector.domain.model.MotionPreference
+import com.eggplant.detector.domain.model.CloudDeletionState
 
 @Composable
 fun SettingsScreen(
@@ -65,6 +66,7 @@ fun SettingsScreen(
     val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
     val globalSharingEnabled by viewModel.globalSharingEnabled.collectAsState()
     val motionPreference by viewModel.motionPreference.collectAsState()
+    val cloudDeletionState by viewModel.cloudDeletionState.collectAsState()
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showMotionDialog by remember { mutableStateOf(false) }
@@ -169,7 +171,12 @@ fun SettingsScreen(
             HorizontalDivider()
             SettingsRow(stringResource(R.string.data_privacy), Icons.Outlined.PrivacyTip, onClick = onPrivacy)
             HorizontalDivider()
-            SettingsRow(stringResource(R.string.delete_shared_cloud_data), Icons.Outlined.DeleteForever, onClick = { showCloudDeletion = true })
+            SettingsRow(
+                stringResource(R.string.delete_shared_cloud_data),
+                Icons.Outlined.DeleteForever,
+                cloudDeletionStatusLabel(cloudDeletionState),
+                onClick = { showCloudDeletion = true },
+            )
             HorizontalDivider()
             SettingsRow(stringResource(R.string.help_faq), Icons.AutoMirrored.Outlined.HelpOutline, onClick = onHelp)
             HorizontalDivider()
@@ -233,7 +240,12 @@ fun SettingsScreen(
             onDismissRequest = { showCloudDeletion = false },
             title = { Text(stringResource(R.string.delete_shared_cloud_data)) },
             text = { Text(stringResource(R.string.delete_shared_cloud_data_body)) },
-            confirmButton = { TextButton(onClick = { viewModel.deleteSharedCloudData(); showCloudDeletion = false }) { Text(stringResource(R.string.delete)) } },
+            confirmButton = {
+                TextButton(
+                    enabled = cloudDeletionState !is CloudDeletionState.Queued && cloudDeletionState !is CloudDeletionState.Processing,
+                    onClick = { viewModel.deleteSharedCloudData(); showCloudDeletion = false },
+                ) { Text(stringResource(R.string.delete)) }
+            },
             dismissButton = { TextButton(onClick = { showCloudDeletion = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
@@ -281,4 +293,13 @@ private fun motionLabel(preference: MotionPreference): String = when (preference
     MotionPreference.SYSTEM -> stringResource(R.string.motion_system)
     MotionPreference.FULL -> stringResource(R.string.motion_full)
     MotionPreference.REDUCED -> stringResource(R.string.motion_reduced)
+}
+
+@Composable
+private fun cloudDeletionStatusLabel(state: CloudDeletionState): String = when (state) {
+    CloudDeletionState.Idle -> stringResource(R.string.cloud_deletion_idle)
+    CloudDeletionState.Queued -> stringResource(R.string.cloud_deletion_queued)
+    CloudDeletionState.Processing -> stringResource(R.string.cloud_deletion_processing)
+    is CloudDeletionState.Completed -> stringResource(R.string.cloud_deletion_completed, state.contributionCount)
+    is CloudDeletionState.Failed -> stringResource(R.string.cloud_deletion_failed)
 }

@@ -66,6 +66,40 @@ class EggplantAppViewModelTest {
     }
 
     @Test
+    fun `confirmed live release persists the retained disease before opening result`() {
+        val viewModel = EggplantAppViewModel(initialHistory = emptyList())
+        val (scene, primary) = diseaseScene(1, InputSource.LIVE)
+        var navigated = false
+
+        viewModel.finalizeLiveDetectionScene(scene, primary) { navigated = true }
+
+        assertTrue(navigated)
+        assertEquals(1, viewModel.history.value.size)
+        assertEquals("LIVE", viewModel.history.value.single().saveMode)
+        assertEquals(SaveState.SAVED, viewModel.saveState.value)
+    }
+
+    @Test
+    fun `confirmed live healthy result does not create disease history`() {
+        val healthy = DetectionBox(
+            ModelMetadata.EGGPLANT_YOLO26M.classFor(2)!!,
+            0.91f,
+            NormalizedBox(0.1f, 0.1f, 0.5f, 0.5f),
+        )
+        val scene = CameraScene(
+            RgbFrame(2, 2, ByteArray(12), 10, InputSource.LIVE, 1),
+            DetectionFrame(listOf(healthy), 10, 100, InputSource.LIVE, 1),
+            StabilityResult(DetectionStatus.HEALTHY, emptyList(), listOf(healthy), false, listOf(healthy)),
+        )
+        val viewModel = EggplantAppViewModel(initialHistory = emptyList())
+
+        viewModel.finalizeLiveDetectionScene(scene, healthy)
+
+        assertTrue(viewModel.history.value.isEmpty())
+        assertEquals(ScanOutcome.HEALTHY_CONFIRMED, viewModel.currentResult.value?.outcome)
+    }
+
+    @Test
     fun `latest saved result becomes last scan`() {
         val viewModel = EggplantAppViewModel(initialHistory = emptyList())
         val (scene, primary) = diseaseScene(1, InputSource.GALLERY)

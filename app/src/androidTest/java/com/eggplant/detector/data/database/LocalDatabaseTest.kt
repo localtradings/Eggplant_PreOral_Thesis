@@ -13,6 +13,7 @@ import com.eggplant.detector.data.database.EggplantDatabase
 import com.eggplant.detector.data.database.migration.MIGRATION_1_TO_2
 import com.eggplant.detector.data.database.migration.MIGRATION_2_TO_3
 import com.eggplant.detector.data.database.migration.MIGRATION_3_TO_4
+import com.eggplant.detector.data.database.migration.MIGRATION_4_TO_5
 import com.eggplant.detector.data.database.entity.NotificationStateEntity
 import com.eggplant.detector.data.database.entity.ScanDetectionEntity
 import com.eggplant.detector.data.database.entity.LegacyScanRecordEntity
@@ -227,6 +228,40 @@ class LocalDatabaseTest {
         migrationHelper.runMigrationsAndValidate(databaseName, 4, true, MIGRATION_1_TO_2, MIGRATION_2_TO_3, MIGRATION_3_TO_4).use { migrated ->
             migrated.query("SELECT COUNT(*) FROM scan_sessions WHERE id = 'legacy-4'").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(1, cursor.getInt(0)) }
             migrated.query("SELECT confidence FROM scan_detections WHERE sessionId = 'legacy-4'").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(.91f, cursor.getFloat(0), .001f) }
+        }
+    }
+
+    @Test
+    fun migrationFourToFiveAllowsMissingRequestNameAndPreservesLegacyNotes() {
+        val databaseName = "migration-4-5"
+        migrationHelper.createDatabase(databaseName, 4).apply {
+            execSQL(
+                "INSERT INTO disease_requests " +
+                    "(id, clientRequestId, requestedName, notes, modelVersion, rightsConsent, trainingConsent, state, uploadProgress, adminNote, createdAt, updatedAt) " +
+                    "VALUES ('request-1', 'request-1', '', '" + "x".repeat(800) + "', 'model', 1, 0, 'QUEUED', 0, NULL, '2026-07-11T00:00:00', '2026-07-11T00:00:00')",
+            )
+            execSQL(
+                "INSERT INTO disease_request_photos " +
+                    "(requestId, position, localPhotoPath, remotePath, uploadState, sha256, sizeBytes) " +
+                    "VALUES ('request-1', 0, '/private/request.jpg', NULL, 'QUEUED', 'pending', 1)",
+            )
+            close()
+        }
+
+        migrationHelper.runMigrationsAndValidate(databaseName, 5, true, MIGRATION_4_TO_5).use { migrated ->
+            migrated.query("SELECT requestedName, length(notes) FROM disease_requests WHERE id = 'request-1'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+                assertEquals(800, cursor.getInt(1))
+            }
+            migrated.query("SELECT captureSource FROM disease_request_photos WHERE requestId = 'request-1'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("capture", cursor.getString(0))
+            }
+            migrated.query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('global_feed_state','cloud_deletion_state')").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
+            }
         }
     }
 }

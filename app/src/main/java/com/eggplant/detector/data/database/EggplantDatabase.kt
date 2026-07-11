@@ -23,6 +23,8 @@ import com.eggplant.detector.data.database.entity.GlobalScanCacheEntity
 import com.eggplant.detector.data.database.entity.GlobalRankingCacheEntity
 import com.eggplant.detector.data.database.entity.DiseaseRequestEntity
 import com.eggplant.detector.data.database.entity.DiseaseRequestPhotoEntity
+import com.eggplant.detector.data.database.entity.CloudDeletionStateEntity
+import com.eggplant.detector.data.database.entity.GlobalFeedStateEntity
 
 @Database(
     entities = [
@@ -41,8 +43,10 @@ import com.eggplant.detector.data.database.entity.DiseaseRequestPhotoEntity
         GlobalRankingCacheEntity::class,
         DiseaseRequestEntity::class,
         DiseaseRequestPhotoEntity::class,
+        GlobalFeedStateEntity::class,
+        CloudDeletionStateEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class EggplantDatabase : RoomDatabase() {

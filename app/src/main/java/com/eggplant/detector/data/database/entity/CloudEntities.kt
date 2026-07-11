@@ -50,6 +50,43 @@ data class GlobalRankingCacheEntity(
     val updatedAt: String,
 )
 
+/**
+ * The Global Scans endpoint is cursor based.  Keeping its cursor locally lets
+ * the feed grow without throwing away an already browsed page every time the
+ * worker runs.
+ */
+@Entity(tableName = "global_feed_state", primaryKeys = ["feedKey"])
+data class GlobalFeedStateEntity(
+    val feedKey: String = DEFAULT_FEED_KEY,
+    val nextCursor: String? = null,
+    val hasMore: Boolean = false,
+    val syncState: String = "IDLE",
+    val lastErrorCode: String? = null,
+    val lastUpdatedAt: String? = null,
+) {
+    companion object {
+        const val DEFAULT_FEED_KEY = "global"
+    }
+}
+
+/**
+ * A deletion request is delivered by the outbox, but deletion itself can
+ * continue on the server.  This separate durable state prevents the UI from
+ * reporting completion merely because the request was accepted.
+ */
+@Entity(tableName = "cloud_deletion_state", primaryKeys = ["operationKey"])
+data class CloudDeletionStateEntity(
+    val operationKey: String = DEFAULT_OPERATION_KEY,
+    val state: String = "IDLE",
+    val affectedContributionIdsJson: String = "[]",
+    val lastErrorCode: String? = null,
+    val updatedAt: String,
+) {
+    companion object {
+        const val DEFAULT_OPERATION_KEY = "shared-cloud-data"
+    }
+}
+
 @Entity(
     tableName = "disease_requests",
     indices = [Index(value = ["clientRequestId"], unique = true), Index("createdAt")],
@@ -58,7 +95,7 @@ data class GlobalRankingCacheEntity(
 data class DiseaseRequestEntity(
     val id: String,
     val clientRequestId: String,
-    val requestedName: String,
+    val requestedName: String?,
     val notes: String?,
     val modelVersion: String,
     val rightsConsent: Boolean,
@@ -91,4 +128,12 @@ data class DiseaseRequestPhotoEntity(
     val uploadState: String,
     val sha256: String,
     val sizeBytes: Long,
+    /** Only `live` or `capture` is accepted for new request photos. */
+    val captureSource: String = "capture",
+)
+
+data class DiseaseRequestWithPhotos(
+    @androidx.room.Embedded val request: DiseaseRequestEntity,
+    @androidx.room.Relation(parentColumn = "id", entityColumn = "requestId")
+    val photos: List<DiseaseRequestPhotoEntity>,
 )

@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import androidx.room.withTransaction
 import com.eggplant.detector.app.EggplantApplication
 import com.eggplant.detector.data.database.entity.GlobalRankingCacheEntity
@@ -20,7 +21,10 @@ import com.eggplant.detector.data.database.entity.DiseaseEntity
 import com.eggplant.detector.data.database.entity.DiseaseLocalizationEntity
 import com.eggplant.detector.data.database.entity.DiseaseReferenceEntity
 import com.eggplant.detector.data.database.entity.DiseaseRequestEntity
+import com.eggplant.detector.data.database.entity.CloudDeletionStateEntity
+import com.eggplant.detector.data.database.entity.GlobalFeedStateEntity
 import com.eggplant.detector.data.database.entity.DiseaseSignEntity
+import com.eggplant.detector.data.database.entity.TreatmentEntity
 import com.eggplant.detector.detection.ncnn.ModelMetadata
 import com.eggplant.detector.domain.model.DiseaseType
 import java.io.File
@@ -30,6 +34,7 @@ import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.util.Locale
 import java.util.UUID
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +58,7 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
         if (!client.isConfigured) return Result.success()
         val dao = application.database.cloudDao()
         val events = dao.pendingEvents(Instant.now().toString())
+        val loadMoreGlobalFeed = inputData.getBoolean(INPUT_LOAD_MORE_GLOBAL_FEED, false)
         var retryNeeded = false
         eventLoop@ for (event in events) {
             if (!isCurrentEvent(event, "PENDING", "RETRY")) continue
@@ -119,7 +125,8 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                         true
                     }
                     "DELETION_REQUEST" -> {
-                        client.post("/api/mobile/v1/me/deletion-request", buildJsonObject {})
+                        val deletion = client.post("/api/mobile/v1/me/deletion-request", buildJsonObject {})
+                        updateDeletionState(deletion)
                         true
                     }
                     else -> error("Unsupported outbox event ${event.eventType}.")
@@ -140,6 +147,7 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                     updatedAt = Instant.now().toString(),
                 ))
                 updateDiseaseRequestForEvent(event, if (willRetry) "RETRY" else "FAILED", 0f)
+                updateDeletionFailure(event, error.code, willRetry)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: IOException) {
@@ -153,6 +161,7 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                     updatedAt = Instant.now().toString(),
                 ))
                 updateDiseaseRequestForEvent(event, if (willRetry) "RETRY" else "FAILED", 0f)
+                updateDeletionFailure(event, "network_error", willRetry)
             } catch (_: Exception) {
                 if (!isCurrentEvent(uploading, "UPLOADING")) continue@eventLoop
                 dao.upsertOutbox(uploading.copy(
@@ -161,12 +170,14 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                     updatedAt = Instant.now().toString(),
                 ))
                 updateDiseaseRequestForEvent(event, "FAILED", 0f)
+                updateDeletionFailure(event, "invalid_event", false)
             }
         }
         val languageTag = normalizedLanguage(application.database.settingsDao().current()?.languageTag)
         retryNeeded = refreshSafely(retryNeeded) { refreshCatalog(client, languageTag) }
         retryNeeded = refreshSafely(retryNeeded) { refreshDiseaseRequests(client) }
-        retryNeeded = refreshSafely(retryNeeded) { refreshGlobalFeed(client, languageTag) }
+        retryNeeded = refreshSafely(retryNeeded) { refreshGlobalFeed(client, languageTag, loadMoreGlobalFeed) }
+        retryNeeded = refreshSafely(retryNeeded) { refreshDeletionStatus(client) }
         return if (retryNeeded) Result.retry() else Result.success()
     }
 
@@ -204,13 +215,22 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
         onProgress: suspend (Float) -> Unit,
     ): String? {
         val photos = payload.photoPaths().map(::File)
+        val sources = payload.photoSources()
         check(photos.size in 1..3 && photos.all { it.isFile && it.length() in 1..8_388_608 }) { "Disease-request photos are unavailable or too large." }
+        check(sources.size == photos.size && sources.all { it in CAMERA_REQUEST_SOURCES }) { "Disease-request photos must be captured in-app." }
         if (!isCurrentEvent(event, "UPLOADING")) return null
         val response = client.post("/api/mobile/v1/disease-requests", buildJsonObject {
-            listOf("clientRequestId", "requestedName", "modelVersion", "rightsConsent", "trainingConsent").forEach { key -> put(key, payload.getValue(key)) }
+            listOf("clientRequestId", "modelVersion", "rightsConsent", "trainingConsent").forEach { key -> put(key, payload.getValue(key)) }
+            payload["requestedName"]?.let { put("requestedName", it) }
             payload["notes"]?.let { put("notes", it) }
             put("photos", buildJsonArray {
-                photos.forEach { photo -> add(buildJsonObject { put("contentLength", photo.length()); put("sha256", photo.sha256()) }) }
+                photos.forEachIndexed { index, photo ->
+                    add(buildJsonObject {
+                        put("contentLength", photo.length())
+                        put("sha256", photo.sha256())
+                        put("source", sources[index])
+                    })
+                }
             })
         })
         val status = response.getValue("status").jsonPrimitive.content
@@ -248,6 +268,20 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
             state,
             progress.coerceIn(0f, 1f),
             Instant.now().toString(),
+        )
+    }
+
+    private suspend fun updateDeletionFailure(event: SyncOutboxEntity, errorCode: String, willRetry: Boolean) {
+        if (event.eventType != "DELETION_REQUEST") return
+        val dao = application.database.cloudDao()
+        val existing = dao.cloudDeletionState()
+        dao.upsertCloudDeletionState(
+            CloudDeletionStateEntity(
+                state = if (willRetry) "QUEUED" else "FAILED",
+                affectedContributionIdsJson = existing?.affectedContributionIdsJson ?: "[]",
+                lastErrorCode = errorCode,
+                updatedAt = Instant.now().toString(),
+            ),
         )
     }
 
@@ -310,6 +344,7 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
         val diseases = mutableListOf<DiseaseEntity>()
         val localizations = mutableListOf<DiseaseLocalizationEntity>()
         val signs = mutableListOf<DiseaseSignEntity>()
+        val treatments = mutableListOf<TreatmentEntity>()
         val references = mutableListOf<DiseaseReferenceEntity>()
         rows.forEach { row ->
             val id = row.getValue("id").jsonPrimitive.content
@@ -336,6 +371,13 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                 guidance = content.requiredText("guidance"),
                 whenToAct = content.requiredText("when_to_act"),
                 disclaimer = content.requiredText("disclaimer"),
+            )
+            treatments += TreatmentEntity(
+                diseaseId = id,
+                languageTag = languageTag,
+                title = if (languageTag == "fil") "Paggamot" else "Recommended action",
+                treatmentType = "RECOMMENDED_ACTION",
+                procedures = content.requiredText("recommended_action"),
             )
             row.getValue("signs").jsonArray.forEachIndexed { index, sign ->
                 val text = sign.jsonPrimitive.content.trim()
@@ -364,6 +406,7 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                 diseases,
                 localizations,
                 signs,
+                treatments,
                 references,
             )
             val latest = settingsDao.current() ?: previous
@@ -394,8 +437,10 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
                     DiseaseRequestEntity(
                         id = existing?.id ?: remoteId,
                         clientRequestId = clientRequestId,
-                        requestedName = row.requiredText("requested_name").take(120),
-                        notes = row.optionalText("notes")?.take(2_000),
+                        requestedName = row.optionalText("requested_name")?.take(120),
+                        // Legacy server rows may predate the 200-character
+                        // limit. They remain readable and the UI clamps them.
+                        notes = row.optionalText("notes")?.take(MAXIMUM_LEGACY_NOTE_LENGTH),
                         modelVersion = existing?.modelVersion ?: ModelMetadata.EGGPLANT_YOLO26M.modelVersion,
                         rightsConsent = existing?.rightsConsent ?: true,
                         trainingConsent = existing?.trainingConsent ?: false,
@@ -410,8 +455,34 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
         }
     }
 
-    private suspend fun refreshGlobalFeed(client: CloudApiClient, languageTag: String) {
-        val response = client.get("/api/mobile/v1/global-scans?limit=30&lang=$languageTag")
+    private suspend fun refreshGlobalFeed(client: CloudApiClient, languageTag: String, loadMore: Boolean) {
+        val dao = application.database.cloudDao()
+        val previousState = dao.globalFeedState() ?: GlobalFeedStateEntity()
+        val cursor = previousState.nextCursor?.takeIf { loadMore }
+        if (loadMore && cursor == null) return
+        dao.upsertGlobalFeedState(
+            previousState.copy(syncState = "LOADING", lastErrorCode = null),
+        )
+        val query = buildString {
+            append("/api/mobile/v1/global-scans?limit=30&lang=")
+            append(languageTag)
+            cursor?.let {
+                append("&cursor=")
+                append(URLEncoder.encode(it, Charsets.UTF_8.name()))
+            }
+        }
+        val response = try {
+            client.get(query)
+        } catch (error: Throwable) {
+            dao.upsertGlobalFeedState(
+                previousState.copy(
+                    syncState = "FAILED",
+                    lastErrorCode = errorCode(error),
+                    lastUpdatedAt = previousState.lastUpdatedAt,
+                ),
+            )
+            throw error
+        }
         val now = Instant.now().toString()
         val cacheRoot = File(applicationContext.cacheDir, "global-scans").apply { mkdirs() }
         val scans = response.getValue("items").jsonArray.map { element ->
@@ -444,18 +515,82 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
             val row = ranking.jsonObject
             GlobalRankingCacheEntity(row.getValue("diseaseId").jsonPrimitive.content, row.getValue("count").jsonPrimitive.content.toLong(), now)
         }
+        val nextCursor = response.optionalText("nextCursor")
         application.database.withTransaction {
-            application.database.cloudDao().clearGlobalScans()
-            application.database.cloudDao().clearGlobalRankings()
-            application.database.cloudDao().upsertGlobalScans(scans)
-            application.database.cloudDao().upsertGlobalRankings(rankings)
+            if (!loadMore) {
+                dao.clearGlobalScans()
+                dao.clearGlobalRankings()
+            }
+            dao.upsertGlobalScans(scans)
+            dao.upsertGlobalRankings(rankings)
+            dao.upsertGlobalFeedState(
+                previousState.copy(
+                    nextCursor = nextCursor,
+                    hasMore = !nextCursor.isNullOrBlank(),
+                    syncState = "READY",
+                    lastErrorCode = null,
+                    lastUpdatedAt = now,
+                ),
+            )
             val settings = application.database.settingsDao().current() ?: AppSettingsEntity(languageTag = languageTag)
             application.database.settingsDao().upsert(settings.copy(lastGlobalSyncAt = now))
         }
-        val retained = scans.mapNotNull { it.cachedPhotoPath?.let(::File)?.name }.toSet()
-        cacheRoot.listFiles().orEmpty().forEach { file ->
-            if ((file.extension == "jpg" && file.name !in retained) || file.extension == "tmp") file.delete()
+        if (!loadMore) {
+            val retained = scans.mapNotNull { it.cachedPhotoPath?.let(::File)?.name }.toSet()
+            cacheRoot.listFiles().orEmpty().forEach { file ->
+                if ((file.extension == "jpg" && file.name !in retained) || file.extension == "tmp") file.delete()
+            }
         }
+    }
+
+    private suspend fun refreshDeletionStatus(client: CloudApiClient) {
+        // Do not poll an endpoint until the user has actually requested this
+        // operation; a brand-new anonymous identity has nothing to reconcile.
+        val state = application.database.cloudDao().cloudDeletionState() ?: return
+        if (state.state == "IDLE") return
+        val response = client.get("/api/mobile/v1/me/deletion-request")
+        updateDeletionState(response)
+    }
+
+    private suspend fun updateDeletionState(response: JsonObject) {
+        val status = response.optionalText("status")?.lowercase(Locale.ROOT) ?: "processing"
+        val state = when (status) {
+            "completed" -> "COMPLETED"
+            "failed" -> "FAILED"
+            "queued", "pending" -> "QUEUED"
+            else -> "PROCESSING"
+        }
+        val returnedIds = response["affectedContributionIds"]?.jsonArray
+            ?.mapNotNull { runCatching { UUID.fromString(it.jsonPrimitive.content).toString() }.getOrNull() }
+            .orEmpty()
+        val existingIds = application.database.cloudDao().cloudDeletionState()
+            ?.affectedContributionIdsJson
+            ?.let { encoded -> runCatching { json.parseToJsonElement(encoded).jsonArray.map { it.jsonPrimitive.content } }.getOrDefault(emptyList()) }
+            .orEmpty()
+        // The POST response names newly unpublished contributions. Later
+        // status polls intentionally omit that large list, so retain it until
+        // terminal cache invalidation is complete.
+        val affectedIds = if (returnedIds.isNotEmpty()) returnedIds else existingIds
+        val now = Instant.now().toString()
+        var removedPhotoPaths: List<String> = emptyList()
+        application.database.withTransaction {
+            application.database.cloudDao().upsertCloudDeletionState(
+                CloudDeletionStateEntity(
+                    state = state,
+                    affectedContributionIdsJson = buildJsonArray {
+                        affectedIds.forEach { id -> add(kotlinx.serialization.json.JsonPrimitive(id)) }
+                    }.toString(),
+                    lastErrorCode = response.optionalText("lastErrorCode"),
+                    updatedAt = now,
+                ),
+            )
+            if (state == "COMPLETED" && affectedIds.isNotEmpty()) {
+                val rows = application.database.cloudDao().globalScansByIds(affectedIds)
+                application.database.cloudDao().deleteGlobalScans(affectedIds)
+                removedPhotoPaths = rows.mapNotNull(GlobalScanCacheEntity::cachedPhotoPath)
+            }
+        }
+        removedPhotoPaths.forEach { path -> runCatching { File(path).delete() } }
     }
 }
 
@@ -477,11 +612,25 @@ object CloudSyncScheduler {
             OneTimeWorkRequestBuilder<CloudSyncWorker>().setConstraints(constraints).build(),
         )
     }
+
+    fun loadMoreGlobalScans(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "eggplant-cloud-sync-more",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<CloudSyncWorker>()
+                .setConstraints(constraints)
+                .setInputData(workDataOf(INPUT_LOAD_MORE_GLOBAL_FEED to true))
+                .build(),
+        )
+    }
 }
 
 private const val MAX_EVENT_ATTEMPTS = 8
 private const val MAX_WORKER_ATTEMPTS = 8
 private const val SHARING_CONSENT_KEY = "sharing-consent"
+private const val INPUT_LOAD_MORE_GLOBAL_FEED = "load_more_global_feed"
+private const val MAXIMUM_LEGACY_NOTE_LENGTH = 20_000
+private val CAMERA_REQUEST_SOURCES = setOf("live", "capture")
 
 private val REMOTE_REQUEST_STATES = setOf(
     "upload_pending",
@@ -506,6 +655,12 @@ private fun JsonObject.requiredText(key: String): String {
 
 private fun JsonObject.optionalText(key: String): String? =
     runCatching { get(key)?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }.getOrNull()
+
+private fun errorCode(error: Throwable): String = when (error) {
+    is CloudApiException -> error.code
+    is IOException -> "network_error"
+    else -> "sync_failed"
+}
 
 private fun moveReplacing(source: File, destination: File) {
     try {

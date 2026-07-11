@@ -96,7 +96,7 @@ describe("missing-disease API validation", () => {
     modelVersion: "eggplant-ncnn-v2",
     rightsConsent: true,
     trainingConsent: false,
-    photos: [{ contentLength: 2_048, sha256: SHA256 }],
+    photos: [{ contentLength: 2_048, sha256: SHA256, source: "capture" }],
   };
 
   it("accepts one to three private photos with explicit rights and no training consent", () => {
@@ -106,8 +106,8 @@ describe("missing-disease API validation", () => {
         ...validRequest,
         photos: [
           ...validRequest.photos,
-          { contentLength: 4_096, sha256: "b".repeat(64) },
-          { contentLength: 8_192, sha256: "c".repeat(64) },
+          { contentLength: 4_096, sha256: "b".repeat(64), source: "live" },
+          { contentLength: 8_192, sha256: "c".repeat(64), source: "capture" },
         ],
       }).ok,
     ).toBe(true);
@@ -118,10 +118,28 @@ describe("missing-disease API validation", () => {
     ["four photos", { ...validRequest, photos: Array(4).fill(validRequest.photos[0]) }],
     ["missing rights", { ...validRequest, rightsConsent: false }],
     ["training consent", { ...validRequest, trainingConsent: true }],
-    ["blank name", { ...validRequest, requestedName: " " }],
-    ["oversized notes", { ...validRequest, notes: "x".repeat(2_001) }],
+    ["oversized notes", { ...validRequest, notes: "x".repeat(201) }],
+    ["gallery photo source", { ...validRequest, photos: [{ contentLength: 2_048, sha256: SHA256, source: "gallery" }] }],
   ])("rejects %s", (_, candidate) => {
     expect(validateDiseaseRequest(candidate)).toEqual({ ok: false });
+  });
+
+  it("accepts an omitted disease name and exactly 200 optional note characters", () => {
+    expect(validateDiseaseRequest({
+      ...validRequest,
+      requestedName: undefined,
+      notes: "x".repeat(200),
+    })).toEqual({
+      ok: true,
+      value: {
+        clientRequestId: REQUEST_ID,
+        notes: "x".repeat(200),
+        modelVersion: "eggplant-ncnn-v2",
+        rightsConsent: true,
+        trainingConsent: false,
+        photos: [{ contentLength: 2_048, sha256: SHA256, source: "capture" }],
+      },
+    });
   });
 
   it("derives and recovers the expected digest from owner-partitioned paths", () => {

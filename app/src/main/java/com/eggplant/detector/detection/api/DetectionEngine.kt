@@ -26,7 +26,9 @@ data class RgbFrame(
 /**
  * A borrowed CameraX RGBA analysis frame. The buffer is only valid for the
  * duration of [RgbaDetectionEngine.detectRgba] and must not be retained.
- * CameraX packs each pixel as red, green, blue, alpha.
+ * CameraX calls the output RGBA_8888, but packs each first-plane pixel as
+ * alpha, red, green, blue. The native bridge must therefore read RGB from
+ * byte offsets 1, 2, and 3.
  */
 data class RgbaFrame(
     val width: Int,
@@ -46,7 +48,8 @@ data class RgbaFrame(
         require(width > 0 && height > 0) { "Frame dimensions must be positive." }
         require(rowStride >= width * 4) { "RGBA row stride is too small." }
         require(rgbaBytes.isDirect) { "Camera frame buffer must be direct." }
-        require(rgbaBytes.capacity() >= rowStride * height) { "Camera frame buffer is incomplete." }
+        require(rgbaBytes.position() == 0) { "Camera frame must start at the plane buffer origin." }
+        require(rgbaBytes.remaining() >= rowStride * height) { "Camera frame buffer is incomplete." }
         require(cropLeft >= 0 && cropTop >= 0 && cropWidth > 0 && cropHeight > 0) {
             "Camera frame crop rectangle is invalid."
         }

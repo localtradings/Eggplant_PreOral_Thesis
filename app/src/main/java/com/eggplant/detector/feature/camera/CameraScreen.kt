@@ -61,6 +61,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import java.util.concurrent.CancellationException
 import kotlin.math.roundToInt
 
 @Composable
@@ -113,6 +114,7 @@ fun CameraScreen(
     var liveCaptureRevision by remember { mutableIntStateOf(0) }
     var liveStillRequestedForDisease by remember { mutableStateOf<String?>(null) }
     var validatedLiveStill by remember { mutableStateOf<CameraScene?>(null) }
+    var liveReleaseFinalizing by remember { mutableStateOf(false) }
     val resultNavigationGate = remember { ResultNavigationGate() }
     val scope = rememberCoroutineScope()
     val previewView = remember {
@@ -188,8 +190,18 @@ fun CameraScreen(
         viewModel.openDetectionScene(scene, primary, ::routeToResult)
     }
 
+    fun finalizeLiveScene(scene: CameraScene, primary: DetectionBox) {
+        if (liveReleaseFinalizing) return
+        liveReleaseFinalizing = true
+        viewModel.finalizeLiveDetectionScene(scene, primary) {
+            liveReleaseFinalizing = false
+            routeToResult()
+        }
+    }
+
     fun handleStillResult(result: Result<CameraScene>, fallbackError: String) {
         cameraState = cameraState.copy(isStillImageProcessing = false)
+        if (result.exceptionOrNull() is CancellationException) return
         when (val outcome = result.toStillImageResult(fallbackError)) {
             is StillImageResult.Disease -> openScene(outcome.scene, outcome.primary)
             is StillImageResult.Healthy -> openScene(outcome.scene, outcome.primary)
@@ -218,8 +230,8 @@ fun CameraScreen(
                         it.modelClass.diseaseId == diseaseId &&
                         it.confidence >= MINIMUM_GLOBAL_SHARE_CONFIDENCE
                 }
-                if (still != null && stillPrimary != null) openScene(still, stillPrimary)
-                else openScene(outcome.scene, outcome.primary)
+                if (still != null && stillPrimary != null) finalizeLiveScene(still, stillPrimary)
+                else finalizeLiveScene(outcome.scene, outcome.primary)
             }
             is LivePreviewOutcome.Healthy -> openScene(outcome.scene, outcome.primary)
             LivePreviewOutcome.NoStableDetection -> {
@@ -229,7 +241,12 @@ fun CameraScreen(
     }
 
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null || cameraState.isStillImageProcessing || cameraState.engineState != EngineState.READY) {
+        if (
+            uri == null ||
+            cameraState.isStillImageProcessing ||
+            liveReleaseFinalizing ||
+            cameraState.engineState != EngineState.READY
+        ) {
             return@rememberLauncherForActivityResult
         }
         val activeController = controller
@@ -296,7 +313,7 @@ fun CameraScreen(
         CameraStatus(cameraState, Modifier.align(Alignment.TopCenter).padding(top = 82.dp))
         CaptureFlashOverlay(captureFlashTrigger)
         CameraBottomBar(
-            processing = cameraState.isStillImageProcessing,
+            processing = cameraState.isStillImageProcessing || liveReleaseFinalizing,
             engineState = cameraState.engineState,
             livePreviewActive = cameraState.livePreviewActive,
             onGallery = {
@@ -307,6 +324,7 @@ fun CameraScreen(
                 if (
                     activeController == null ||
                     cameraState.isStillImageProcessing ||
+                    liveReleaseFinalizing ||
                     cameraState.engineState != EngineState.READY
                 ) {
                     return@CameraBottomBar
@@ -339,8 +357,11 @@ fun CameraScreen(
             },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
-        if (cameraState.isStillImageProcessing) {
-            StillImageProcessingOverlay(Modifier.fillMaxSize())
+        if (cameraState.isStillImageProcessing || liveReleaseFinalizing) {
+            StillImageProcessingOverlay(
+                modifier = Modifier.fillMaxSize(),
+                labelRes = if (liveReleaseFinalizing) R.string.saving_history else R.string.analyzing,
+            )
         }
     }
 }
@@ -379,6 +400,7 @@ private fun GalleryWithoutCameraPermission(
             active.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
                 bitmap.recycle()
                 state = state.copy(isStillImageProcessing = false)
+                if (result.exceptionOrNull() is CancellationException) return@analyzeBitmap
                 when (val outcome = result.toStillImageResult("Could not analyze the selected image.")) {
                     is StillImageResult.Disease -> viewModel.openDetectionScene(outcome.scene, outcome.primary, onResult)
                     is StillImageResult.Healthy -> viewModel.openDetectionScene(outcome.scene, outcome.primary, onResult)
@@ -401,7 +423,10 @@ private fun GalleryWithoutCameraPermission(
 }
 
 @Composable
-private fun StillImageProcessingOverlay(modifier: Modifier = Modifier) {
+private fun StillImageProcessingOverlay(
+    modifier: Modifier = Modifier,
+    labelRes: Int = R.string.analyzing,
+) {
     val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
@@ -427,7 +452,7 @@ private fun StillImageProcessingOverlay(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    stringResource(R.string.analyzing),
+                    stringResource(labelRes),
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                 )

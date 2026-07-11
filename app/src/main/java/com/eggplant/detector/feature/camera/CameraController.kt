@@ -2,10 +2,12 @@ package com.eggplant.detector.feature.camera
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import android.util.Size
+import android.view.View
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -20,6 +22,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.DefaultLifecycleObserver
 import com.eggplant.detector.BuildConfig
 import com.eggplant.detector.detection.api.DetectionEngine
 import com.eggplant.detector.detection.api.DetectionClassPolicy
@@ -67,8 +70,11 @@ class CameraController(
     private val deliveredRevision = AtomicLong(0L)
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
+    private var previewUseCase: Preview? = null
     private var imageAnalysis: ImageAnalysis? = null
     private var imageCapture: ImageCapture? = null
+    private var rotationPreviewView: PreviewView? = null
+    private var rotationLayoutListener: View.OnLayoutChangeListener? = null
     @Volatile private var closed = false
     @Volatile private var paused = true
     @Volatile private var classPolicy = DetectionClassPolicy()
@@ -77,10 +83,27 @@ class CameraController(
     @Volatile private var liveStartedAtMillis = 0L
     @Volatile private var liveFirstFrameLogged = false
     @Volatile private var liveFirstFeedbackLogged = false
+    @Volatile private var liveFrameDiagnosticsLogged = false
+    @Volatile private var targetRotation = Surface.ROTATION_0
     @Volatile private var state = CameraAnalysisState()
+
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStop(owner: LifecycleOwner) {
+            cancelForLifecycleStop()
+        }
+
+        override fun onDestroy(owner: LifecycleOwner) {
+            close()
+        }
+    }
+
+    init {
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+    }
 
     fun start(previewView: PreviewView) {
         if (closed || !startRequested.compareAndSet(false, true)) return
+        observePreviewRotation(previewView)
         emit(state.copy(engineState = EngineState.UNINITIALIZED, error = null))
         val providerFuture = ProcessCameraProvider.getInstance(appContext)
         providerFuture.addListener(
@@ -151,6 +174,7 @@ class CameraController(
             lastLiveAnalyzeStartedMillis = 0L
             liveFirstFrameLogged = false
             liveFirstFeedbackLogged = false
+            liveFrameDiagnosticsLogged = false
             resumeAnalysis()
             tracker.reset()
             latestScene = null
@@ -377,8 +401,71 @@ class CameraController(
         }
     }
 
+    /**
+     * CameraX is lifecycle-bound, but in-flight app work needs an explicit
+     * cancellation boundary too. Otherwise a frame/capture completed after a
+     * background transition can reopen a result belonging to a dead preview.
+     */
+    private fun cancelForLifecycleStop() {
+        if (closed) return
+        stillRequestToken.incrementAndGet()
+        captureInFlight.set(false)
+        galleryInFlight.set(false)
+        synchronized(sessionLock) {
+            pauseAnalysis()
+            liveToken.set(0L)
+            liveStartedAtMillis = 0L
+            livePreviewSession.cancel()
+            tracker.reset()
+            latestScene = null
+            emit(
+                state.copy(
+                    livePreviewActive = false,
+                    isStillImageProcessing = false,
+                    status = DetectionStatus.SEARCHING,
+                    visibleDetections = emptyList(),
+                    stableDetections = emptyList(),
+                    confirmedDetections = emptyList(),
+                    saveEligible = false,
+                    qualityHint = null,
+                    error = null,
+                ),
+            )
+        }
+    }
+
+    private fun observePreviewRotation(previewView: PreviewView) {
+        rotationLayoutListener?.let { listener ->
+            rotationPreviewView?.removeOnLayoutChangeListener(listener)
+        }
+        rotationPreviewView = previewView
+        val listener = View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            updateTargetRotation(view.display?.rotation ?: Surface.ROTATION_0)
+        }
+        rotationLayoutListener = listener
+        previewView.addOnLayoutChangeListener(listener)
+        updateTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
+    }
+
+    /** Safe to call on any thread; CameraX use cases are changed on main. */
+    private fun updateTargetRotation(rotation: Int) {
+        if (rotation !in setOf(Surface.ROTATION_0, Surface.ROTATION_90, Surface.ROTATION_180, Surface.ROTATION_270)) {
+            return
+        }
+        if (targetRotation == rotation) return
+        targetRotation = rotation
+        mainExecutor.execute {
+            if (closed) return@execute
+            previewUseCase?.targetRotation = rotation
+            imageAnalysis?.targetRotation = rotation
+            imageCapture?.targetRotation = rotation
+        }
+    }
+
     private fun bindCamera(previewView: PreviewView) {
         if (closed) return
+        val displayRotation = previewView.display?.rotation ?: targetRotation
+        updateTargetRotation(displayRotation)
         val analysisResolutionSelector = ResolutionSelector.Builder()
             .setResolutionStrategy(
                 ResolutionStrategy(
@@ -395,18 +482,21 @@ class CameraController(
                 ),
             )
             .build()
-        val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
+        val preview = Preview.Builder()
+            .setTargetRotation(displayRotation)
+            .build()
+            .also { it.surfaceProvider = previewView.surfaceProvider }
         val analysis = ImageAnalysis.Builder()
             .setResolutionSelector(analysisResolutionSelector)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             .setOutputImageRotationEnabled(true)
-            .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
+            .setTargetRotation(displayRotation)
             .build()
             .also { useCase -> useCase.setAnalyzer(analysisExecutor, ::analyzeImage) }
         val capture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
+            .setTargetRotation(displayRotation)
             .setResolutionSelector(captureResolutionSelector)
             .build()
         provider?.unbindAll()
@@ -428,6 +518,7 @@ class CameraController(
                 capture,
             )
         }
+        previewUseCase = preview
         imageAnalysis = analysis
         imageCapture = capture
         val supportsTorch = camera?.cameraInfo?.hasFlashUnit() == true
@@ -448,6 +539,18 @@ class CameraController(
             val cropWidth = crop.width()
             val cropHeight = crop.height()
             if (cropWidth <= 0 || cropHeight <= 0) return
+            val rotationDegrees = image.imageInfo.rotationDegrees
+            logLiveFrameDiagnosticsIfNeeded(
+                token = token,
+                width = image.width,
+                height = image.height,
+                rowStride = plane.rowStride,
+                pixelStride = plane.pixelStride,
+                cropWidth = cropWidth,
+                cropHeight = cropHeight,
+                rotationDegrees = rotationDegrees,
+                directBuffer = sourceBuffer.isDirect,
+            )
             val frameQuality = FrameQualityEvaluator.evaluateRgba(
                 sourceBuffer,
                 image.width,
@@ -458,7 +561,6 @@ class CameraController(
                 cropWidth,
                 cropHeight,
             )
-            val rotationDegrees = image.imageInfo.rotationDegrees
             val outputWidth = if (rotationDegrees in setOf(90, 270)) cropHeight else cropWidth
             val outputHeight = if (rotationDegrees in setOf(90, 270)) cropWidth else cropHeight
             val directEngine = engine as? RgbaDetectionEngine
@@ -489,8 +591,13 @@ class CameraController(
             } else {
                 null
             }
-            val fallbackRgb = if (directFrame == null) {
-                val rgba = ByteArray(sourceBuffer.remaining()).also(sourceBuffer::get)
+            var fallbackRgb: RotatedRgb? = null
+            fun materializeFallbackRgb(): RotatedRgb {
+                fallbackRgb?.let { return it }
+                val rgba = CameraFrameConverter.copyRgbaPlane(
+                    sourceBuffer,
+                    plane.rowStride * image.height,
+                )
                 val rgb = CameraFrameConverter.rgbaToRgb(
                     rgba,
                     image.width,
@@ -501,17 +608,33 @@ class CameraController(
                     cropWidth,
                     cropHeight,
                 )
-                CameraFrameConverter.rotateRgb(rgb, cropWidth, cropHeight, rotationDegrees)
-            } else {
-                null
+                return CameraFrameConverter.rotateRgb(rgb, cropWidth, cropHeight, rotationDegrees)
+                    .also { fallbackRgb = it }
             }
             val sceneToken = directFrame?.sceneToken
-                ?: CameraFrameConverter.sceneToken(requireNotNull(fallbackRgb).rgbBytes, outputWidth, outputHeight)
+                ?: CameraFrameConverter.sceneToken(
+                    materializeFallbackRgb().rgbBytes,
+                    outputWidth,
+                    outputHeight,
+                )
             val conversionMillis = (SystemClock.elapsedRealtimeNanos() - conversionStartedAtNanos) / 1_000_000
             val rawDetection = if (directFrame != null) {
-                requireNotNull(directEngine).detectRgba(directFrame).getOrThrow()
+                requireNotNull(directEngine).detectRgba(directFrame).getOrElse { directError ->
+                    logDirectFrameFallback(directError)
+                    val rotated = materializeFallbackRgb()
+                    engine.detect(
+                        RgbFrame(
+                            width = rotated.width,
+                            height = rotated.height,
+                            rgbBytes = rotated.rgbBytes,
+                            timestampMillis = now,
+                            source = InputSource.LIVE,
+                            sceneToken = sceneToken,
+                        ),
+                    ).getOrThrow()
+                }
             } else {
-                val rotated = requireNotNull(fallbackRgb)
+                val rotated = materializeFallbackRgb()
                 engine.detect(
                     RgbFrame(
                         width = rotated.width,
@@ -523,16 +646,25 @@ class CameraController(
                     ),
                 ).getOrThrow()
             }
-            val liveUpdate = synchronized(sessionLock) {
-                if (!isCurrentLiveRequest(token)) return@synchronized null
-                val detection = gateDetections(rawDetection)
-                val stability = tracker.update(detection)
-                detection to stability
-            } ?: return
-            val (detection, stability) = liveUpdate
-            val closeUp = detection.detections.maxOfOrNull {
+            val gatedDetection = gateDetections(rawDetection)
+            val closeUp = gatedDetection.detections.maxOfOrNull {
                 (it.bounds.right - it.bounds.left) * (it.bounds.bottom - it.bounds.top)
             }?.let { it > .82f } == true
+            val qualityHint = if (closeUp) FrameQualityHint.TOO_CLOSE else frameQuality
+            // Poor frames should offer guidance instead of accidentally
+            // confirming a Healthy result. Disease boxes remain visible so a
+            // valid lesion is never silently discarded merely for being dark.
+            val qualityFilteredDetection = if (qualityHint == null) gatedDetection else gatedDetection.copy(
+                detections = gatedDetection.detections.filterNot { it.modelClass.isHealthy },
+            )
+            val liveUpdate = synchronized(sessionLock) {
+                if (!isCurrentLiveRequest(token)) return@synchronized null
+                val trackerStability = tracker.update(qualityFilteredDetection)
+                if (qualityHint != null) livePreviewSession.discardHealthy()
+                val stability = if (qualityHint == null) trackerStability else trackerStability.withoutHealthyConfirmation()
+                qualityFilteredDetection to stability
+            } ?: return
+            val (detection, stability) = liveUpdate
             logLiveLatencyIfNeeded(
                 token = token,
                 analyzeStartedAtMillis = now,
@@ -542,23 +674,7 @@ class CameraController(
                 conversionMillis = conversionMillis,
             )
             if (stability.visibleDetections.isNotEmpty() || stability.confirmedDetections.isNotEmpty()) {
-                val rotated = fallbackRgb ?: run {
-                    val bytes = ByteArray(sourceBuffer.capacity()).also { destination ->
-                        val duplicate = sourceBuffer.duplicate().apply { position(0) }
-                        duplicate.get(destination)
-                    }
-                    val rgb = CameraFrameConverter.rgbaToRgb(
-                        bytes,
-                        image.width,
-                        image.height,
-                        plane.rowStride,
-                        crop.left,
-                        crop.top,
-                        cropWidth,
-                        cropHeight,
-                    )
-                    CameraFrameConverter.rotateRgb(rgb, cropWidth, cropHeight, rotationDegrees)
-                }
+                val rotated = materializeFallbackRgb()
                 val rgbFrame = RgbFrame(
                     width = rotated.width,
                     height = rotated.height,
@@ -589,7 +705,7 @@ class CameraController(
                             frameWidth = outputWidth,
                             frameHeight = outputHeight,
                             livePreviewActive = true,
-                            qualityHint = if (closeUp) FrameQualityHint.TOO_CLOSE else frameQuality,
+                            qualityHint = qualityHint,
                             error = null,
                         ),
                     )
@@ -694,6 +810,21 @@ class CameraController(
         return gated
     }
 
+    private fun StabilityResult.withoutHealthyConfirmation(): StabilityResult {
+        val visible = visibleDetections.filterNot { it.modelClass.isHealthy }
+        val confirmed = confirmedDetections.filterNot { it.modelClass.isHealthy }
+        val status = if (confirmed.any { !it.modelClass.isHealthy }) {
+            DetectionStatus.DISEASE_DETECTED
+        } else {
+            DetectionStatus.SEARCHING
+        }
+        return copy(
+            status = status,
+            visibleDetections = visible,
+            confirmedDetections = confirmed,
+        )
+    }
+
     private fun logRejectedDetection(
         source: InputSource,
         detection: DetectionBox,
@@ -707,6 +838,42 @@ class CameraController(
             "source=$source rejected class=${detection.modelClass.index}:${detection.modelClass.modelLabel} " +
                 "confidence=${String.format(Locale.US, "%.3f", detection.confidence)} " +
                 "area=${String.format(Locale.US, "%.4f", area)} reason=${decision.reason}",
+        )
+    }
+
+    /**
+     * Debug-only, non-sensitive frame diagnostics for OEM/ABI investigations.
+     * It intentionally omits installation IDs, serials, image contents, URIs,
+     * account data, and precise device names.
+     */
+    private fun logLiveFrameDiagnosticsIfNeeded(
+        token: Long,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        pixelStride: Int,
+        cropWidth: Int,
+        cropHeight: Int,
+        rotationDegrees: Int,
+        directBuffer: Boolean,
+    ) {
+        if (!BuildConfig.DEBUG || token != liveToken.get() || liveFrameDiagnosticsLogged) return
+        liveFrameDiagnosticsLogged = true
+        val abi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
+        Log.d(
+            LOG_TAG,
+            "live_camera_frame api=${Build.VERSION.SDK_INT} abi=$abi " +
+                "frame=${width}x$height crop=${cropWidth}x$cropHeight " +
+                "row_stride=$rowStride pixel_stride=$pixelStride rotation=$rotationDegrees " +
+                "direct_buffer=$directBuffer",
+        )
+    }
+
+    private fun logDirectFrameFallback(error: Throwable) {
+        if (!BuildConfig.DEBUG) return
+        Log.w(
+            LOG_TAG,
+            "live_direct_rgba_failed_falling_back_to_rgb type=${error::class.java.simpleName}",
         )
     }
 
@@ -776,15 +943,22 @@ class CameraController(
     override fun close() {
         if (closed) return
         closed = true
+        lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
         paused = true
         liveToken.set(0L)
         stillRequestToken.incrementAndGet()
         captureInFlight.set(false)
         galleryInFlight.set(false)
+        rotationLayoutListener?.let { listener ->
+            rotationPreviewView?.removeOnLayoutChangeListener(listener)
+        }
+        rotationLayoutListener = null
+        rotationPreviewView = null
         imageAnalysis?.clearAnalyzer()
         mainExecutor.execute {
             runCatching { provider?.unbindAll() }
             camera = null
+            previewUseCase = null
             imageAnalysis = null
             imageCapture = null
             provider = null

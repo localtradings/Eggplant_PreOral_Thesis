@@ -122,7 +122,7 @@ export async function GET(request: Request) {
 
   const { data: deletions, error: deletionReadError } = await supabase
     .from("deletion_requests")
-    .select("id,owner_id")
+    .select("id,owner_id,attempt_count")
     .in("status", ["queued", "processing", "failed"])
     .order("created_at")
     .limit(20);
@@ -138,36 +138,33 @@ export async function GET(request: Request) {
   for (const deletion of deletions ?? []) {
     const { error: processingError } = await supabase
       .from("deletion_requests")
-      .update({ status: "processing" })
+      .update({ status: "processing", attempt_count: deletion.attempt_count + 1, last_error_code: null })
       .eq("id", deletion.id);
     if (processingError) {
       failed += 1;
       continue;
     }
 
-    const [contributions, requestPhotos, shareIntents] = await Promise.all([
-      supabase
-        .from("scan_contributions")
-        .select("photo_path")
-        .eq("owner_id", deletion.owner_id),
-      supabase
-        .from("disease_request_photos")
-        .select("object_path")
-        .eq("owner_id", deletion.owner_id),
-      supabase
-        .from("global_share_intents")
-        .select("photo_path")
-        .eq("owner_id", deletion.owner_id),
-    ]);
-    if (contributions.error || requestPhotos.error || shareIntents.error) {
+    // Delete exactly the immutable snapshot created with the request. Never
+    // query by owner here: the owner may have opted back into sharing since.
+    const { data: targets, error: targetReadError } = await supabase
+      .from("deletion_request_targets")
+      .select("resource_type,resource_id,photo_path")
+      .eq("deletion_request_id", deletion.id);
+    if (targetReadError) {
       await markDeletionFailed(deletion.id);
       failed += 1;
       continue;
     }
+    const targetRows = targets ?? [];
+    const contributionIds = targetRows
+      .filter((target) => target.resource_type === "scan_contribution")
+      .map((target) => target.resource_id);
+    const shareIntentIds = targetRows
+      .filter((target) => target.resource_type === "global_share_intent")
+      .map((target) => target.resource_id);
     const paths = [...new Set([
-      ...(contributions.data ?? []).map((row) => row.photo_path),
-      ...(requestPhotos.data ?? []).map((row) => row.object_path),
-      ...(shareIntents.data ?? []).map((row) => row.photo_path),
+      ...targetRows.map((target) => target.photo_path),
     ])];
     if (paths.length > 0) {
       const { error } = await supabase.storage
@@ -180,48 +177,30 @@ export async function GET(request: Request) {
       }
     }
 
-    // Preserve the moderation signal while removing the reporter identity and
-    // optional free-text content supplied by this owner.
-    const { error: reportAnonymizeError } = await supabase
-      .from("content_reports")
-      .update({
-        reporter_id: null,
-        details: null,
-        reporter_anonymized_at: new Date().toISOString(),
-      })
-      .eq("reporter_id", deletion.owner_id);
-    if (reportAnonymizeError) {
-      await markDeletionFailed(deletion.id);
-      failed += 1;
-      continue;
-    }
-
-    const [scanDelete, requestDelete, intentDelete, installationUpdate] = await Promise.all([
-      supabase
-        .from("scan_contributions")
-        .delete()
-        .eq("owner_id", deletion.owner_id),
-      supabase
-        .from("disease_requests")
-        .delete()
-        .eq("owner_id", deletion.owner_id),
-      supabase
-        .from("global_share_intents")
-        .delete()
-        .eq("owner_id", deletion.owner_id),
-      supabase
-        .from("installations")
-        .update({ sharing_enabled: false, consent_version: null, consented_at: null })
-        .eq("owner_id", deletion.owner_id),
+    const mutations = await Promise.all([
+      contributionIds.length > 0
+        ? supabase
+          .from("scan_contributions")
+          .delete()
+          .eq("owner_id", deletion.owner_id)
+          .in("id", contributionIds)
+        : Promise.resolve({ error: null }),
+      shareIntentIds.length > 0
+        ? supabase
+          .from("global_share_intents")
+          .delete()
+          .eq("owner_id", deletion.owner_id)
+          .in("id", shareIntentIds)
+        : Promise.resolve({ error: null }),
     ]);
-    if (scanDelete.error || requestDelete.error || intentDelete.error || installationUpdate.error) {
+    if (mutations.some((mutation) => mutation.error)) {
       await markDeletionFailed(deletion.id);
       failed += 1;
       continue;
     }
     const { error: completionError } = await supabase
       .from("deletion_requests")
-      .update({ status: "completed", completed_at: new Date().toISOString() })
+      .update({ status: "completed", completed_at: new Date().toISOString(), last_error_code: null })
       .eq("id", deletion.id);
     if (completionError) {
       await markDeletionFailed(deletion.id);
@@ -259,7 +238,7 @@ export async function GET(request: Request) {
   async function markDeletionFailed(id: string) {
     await supabase
       .from("deletion_requests")
-      .update({ status: "failed" })
+      .update({ status: "failed", last_error_code: "shared_cleanup_failed" })
       .eq("id", id);
   }
 }

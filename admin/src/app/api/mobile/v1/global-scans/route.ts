@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     supabase
       .from("disease_localizations")
       .select(
-        "disease_id,name,description,symptom_preview,causes,prevention,guidance,when_to_act,disclaimer",
+        "disease_id,name,description,symptom_preview,causes,recommended_action,prevention,guidance,when_to_act,disclaimer",
       )
       .eq("language_tag", languageTag)
       .in("disease_id", filterIds),

@@ -136,7 +136,10 @@ private fun MyScansPage(viewModel: EggplantAppViewModel, onResultClick: (ScanRes
                 Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(Modifier.weight(1f)) { Text(request.requestedName, fontWeight = FontWeight.Bold); Text(request.notes.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2) }
+                            Column(Modifier.weight(1f)) {
+                                Text(request.requestedName ?: stringResource(R.string.request_name_not_provided), fontWeight = FontWeight.Bold)
+                                Text(request.notes.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                            }
                             Text(request.status.replace('_', ' '), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                         }
                         if (request.status in setOf("QUEUED", "UPLOADING", "RETRY")) {
@@ -173,10 +176,11 @@ private fun GlobalScansPage(viewModel: EggplantAppViewModel, onGlobalClick: (Glo
     val scans by viewModel.globalScans.collectAsState()
     val rankings by viewModel.globalRankings.collectAsState()
     val action by viewModel.cloudActionState.collectAsState()
+    val feedState by viewModel.globalFeedState.collectAsState()
     var query by rememberSaveable { mutableStateOf("") }
     val filtered = scans.filter { query.isBlank() || it.diseaseName.contains(query.trim(), true) }
     PullToRefreshBox(
-        isRefreshing = action == CloudActionState.Working,
+        isRefreshing = feedState.isLoading,
         onRefresh = viewModel::refreshGlobalScans,
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -206,7 +210,7 @@ private fun GlobalScansPage(viewModel: EggplantAppViewModel, onGlobalClick: (Glo
                 }
             }
             when {
-                scans.isEmpty() && action == CloudActionState.Working -> items(3) { GlobalSkeleton() }
+                scans.isEmpty() && feedState.isLoading -> items(3) { GlobalSkeleton() }
                 filtered.isEmpty() -> item {
                     Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(if (scans.isEmpty()) Icons.Outlined.CloudOff else Icons.Outlined.Public, null, tint = MaterialTheme.colorScheme.primary)
@@ -216,7 +220,34 @@ private fun GlobalScansPage(viewModel: EggplantAppViewModel, onGlobalClick: (Glo
                 }
                 else -> items(filtered, key = { "global-${it.id}" }) { scan -> GlobalScanCard(scan) { onGlobalClick(scan) } }
             }
-            item { Text(stringResource(R.string.last_updated_cached), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (feedState.lastErrorCode != null) {
+                item {
+                    Text(
+                        stringResource(R.string.global_scans_refresh_failed),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            if (feedState.hasMore && query.isBlank()) {
+                item {
+                    TextButton(
+                        onClick = viewModel::loadMoreGlobalScans,
+                        enabled = !feedState.isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (feedState.isLoading) stringResource(R.string.loading_more) else stringResource(R.string.load_more))
+                    }
+                }
+            }
+            item {
+                Text(
+                    if (feedState.lastUpdatedAt == null) stringResource(R.string.global_scans_not_loaded)
+                    else stringResource(R.string.last_updated_cached),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

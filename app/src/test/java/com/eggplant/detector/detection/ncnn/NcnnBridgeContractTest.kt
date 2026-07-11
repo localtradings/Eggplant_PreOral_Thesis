@@ -46,4 +46,17 @@ class NcnnBridgeContractTest {
         assertFalse(source.contains("set_omp_num_threads(1)"))
         assertFalse(source.contains("OMP_NUM_THREADS\", \"1\""))
     }
+
+    @Test
+    fun `native direct CameraX preprocessing reads RGB from ARGB byte offsets`() {
+        val source = File("src/main/cpp/detection/eggplant_ncnn_bridge.cpp").readText()
+
+        assertTrue(source.contains("kCameraXRedOffset = 1"))
+        assertTrue(source.contains("kCameraXGreenOffset = 2"))
+        assertTrue(source.contains("kCameraXBlueOffset = 3"))
+        assertTrue(source.contains("target[0] = source[kCameraXRedOffset]"))
+        assertTrue(source.contains("target[1] = source[kCameraXGreenOffset]"))
+        assertTrue(source.contains("target[2] = source[kCameraXBlueOffset]"))
+        assertFalse(source.contains("target[0] = source[0]"))
+    }
 }

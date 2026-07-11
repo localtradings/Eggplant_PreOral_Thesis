@@ -19,6 +19,11 @@ namespace {
 constexpr float kNmsThreshold = 0.45f;
 constexpr int kMaxDetections = 100;
 constexpr int kMaximumCpuInferenceThreads = 4;
+// CameraX's OUTPUT_IMAGE_FORMAT_RGBA_8888 is physically packed as A/R/G/B in
+// the first ImageProxy plane. Do not treat its first three bytes as RGB.
+constexpr int kCameraXRedOffset = 1;
+constexpr int kCameraXGreenOffset = 2;
+constexpr int kCameraXBlueOffset = 3;
 
 struct Proposal {
     int class_index;
@@ -291,9 +296,9 @@ void convert_rgba_to_rotated_rgb(
             const unsigned char* source = row + source_x * 4;
             unsigned char* target = engine->rgb_scratch.data() +
                 (static_cast<size_t>(target_y) * output_width + target_x) * 3;
-            target[0] = source[0];
-            target[1] = source[1];
-            target[2] = source[2];
+            target[0] = source[kCameraXRedOffset];
+            target[1] = source[kCameraXGreenOffset];
+            target[2] = source[kCameraXBlueOffset];
         }
     }
 }

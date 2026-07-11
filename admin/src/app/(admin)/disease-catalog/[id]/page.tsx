@@ -1,9 +1,12 @@
 import { AdminShell } from "@/components/admin-shell";
+import { FormSubmitButton } from "@/components/form-submit-button";
+import { hashActionPayload, requireIdempotencyKey } from "@/lib/action-idempotency";
 import { requireAdmin } from "@/lib/auth";
 import { getAdminClient } from "@/lib/supabase/admin";
 import { ArrowLeft, LockKeyhole } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
 
@@ -11,9 +14,10 @@ async function saveContent(formData: FormData) {
   "use server";
   const admin = await requireAdmin(["owner", "admin"]);
   const id = String(formData.get("id") ?? "");
+  const idempotencyKey = requireIdempotencyKey(formData);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) throw new Error("Invalid disease ID.");
   const payloads = (["en", "fil"] as const).map((language) => {
-    const fields = ["name", "description", "symptom_preview", "causes", "prevention", "guidance", "when_to_act", "disclaimer"] as const;
+    const fields = ["name", "description", "symptom_preview", "causes", "recommended_action", "prevention", "guidance", "when_to_act", "disclaimer"] as const;
     const content = Object.fromEntries(fields.map((field) => [field, String(formData.get(`${language}_${field}`) ?? "").trim()]));
     if (Object.values(content).some((value) => value.length < 2 || value.length > 4_000)) throw new Error(`Complete all ${language} content fields within the allowed length.`);
     const reference = {
@@ -32,7 +36,12 @@ async function saveContent(formData: FormData) {
     return { language, content, reference, signs };
   });
   const [english, filipino] = payloads;
-  const { error } = await getAdminClient().rpc("update_disease_catalog_content", {
+  const payloadHash = hashActionPayload({
+    diseaseId: id,
+    english: { content: english.content, signs: english.signs, reference: english.reference },
+    filipino: { content: filipino.content, signs: filipino.signs, reference: filipino.reference },
+  });
+  const { data: outcome, error } = await getAdminClient().rpc("update_disease_catalog_content_v2", {
     p_disease_id: id,
     p_en_content: english.content,
     p_fil_content: filipino.content,
@@ -41,17 +50,20 @@ async function saveContent(formData: FormData) {
     p_en_reference: english.reference,
     p_fil_reference: filipino.reference,
     p_admin_id: admin.user.id,
+    p_idempotency_key: idempotencyKey,
+    p_payload_hash: payloadHash,
   });
-  if (error) throw new Error("The bilingual disease content could not be published.");
-  redirect("/disease-catalog");
+  if (error || !["applied", "unchanged"].includes(outcome ?? "")) throw new Error("The bilingual disease content could not be published.");
+  redirect(`/disease-catalog?published=${encodeURIComponent(id)}&outcome=${encodeURIComponent(outcome)}`);
 }
 
-export default async function DiseaseContentEditor({ params }: { params: Promise<{ id: string }> }) {
+export default async function DiseaseContentEditor({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ outcome?: string }> }) {
   const admin = await requireAdmin(["owner", "admin"]); const { id } = await params; const supabase = getAdminClient();
+  const outcome = (await searchParams).outcome;
   const { data: disease, error } = await supabase.from("disease_catalog").select("id,model_class_index,model_label,category,content_version,disease_localizations(*),disease_signs(*),disease_references(*)").eq("id", id).maybeSingle();
   if (error) throw new Error("The disease content could not be loaded.");
   if (!disease) notFound();
-  return <AdminShell active="/disease-catalog" role={admin.role}><div className="fade-up mx-auto max-w-5xl"><Link href="/disease-catalog" className="inline-flex items-center gap-2 text-sm font-semibold text-[#512b91]"><ArrowLeft size={17}/>Back to catalog</Link><header className="mt-4 flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-bold capitalize">{disease.id.replaceAll("-", " ")}</h1><p className="mt-1 text-sm text-[#6f6b80]">Edit bilingual educational content, symptoms, and citations.</p></div><div className="rounded-xl bg-[#f0eafa] px-3 py-2 font-mono text-xs text-[#512b91]"><LockKeyhole className="mr-1 inline" size={14}/>Class {disease.model_class_index}: {disease.model_label} (read-only)</div></header><form action={saveContent} className="mt-6 grid gap-5"><input type="hidden" name="id" value={disease.id}/>{(["en","fil"] as const).map((language)=>{const content=disease.disease_localizations?.find((row)=>row.language_tag===language); const signs=(disease.disease_signs??[]).filter((row)=>row.language_tag===language).sort((a,b)=>a.position-b.position).map((row)=>row.text); const reference=disease.disease_references?.find((row)=>row.language_tag===language && row.position===0); return <section className="surface p-5" key={language}><h2 className="text-xl font-bold">{language === "en" ? "English" : "Filipino"}</h2><div className="mt-4 grid gap-4 sm:grid-cols-2"><Field name={`${language}_name`} label="Name" value={content?.name}/><Field name={`${language}_symptom_preview`} label="Symptom preview" value={content?.symptom_preview}/></div><SignsArea name={`${language}_signs`} value={signs.join("\n")}/>{(["description","causes","prevention","guidance","when_to_act","disclaimer"] as const).map((field)=><Area key={field} name={`${language}_${field}`} label={field.replaceAll("_"," ")} value={content?.[field]}/>) }<h3 className="mt-5 font-bold">Primary authoritative reference</h3><div className="mt-3 grid gap-4 sm:grid-cols-2"><Field name={`${language}_reference_publisher`} label="Publisher" value={reference?.publisher}/><Field name={`${language}_reference_title`} label="Title" value={reference?.title}/></div><Field name={`${language}_reference_url`} label="HTTPS URL" value={reference?.url}/></section>})}<button className="focus-ring h-12 rounded-xl bg-[#512b91] px-5 font-semibold text-white transition-transform hover:-translate-y-0.5">Publish content update</button></form></div></AdminShell>;
+  return <AdminShell active="/disease-catalog" role={admin.role}><div className="fade-up mx-auto max-w-5xl"><Link href="/disease-catalog" className="inline-flex items-center gap-2 text-sm font-semibold text-[#512b91]"><ArrowLeft size={17}/>Back to catalog</Link>{outcome && <p role="status" className="status-banner mt-4 rounded-xl border border-[#bfe4c5] bg-[#f1fbf2] p-3 text-sm font-semibold text-[#247936]">{outcome === "unchanged" ? "This content was already up to date." : "Content update published."}</p>}<header className="mt-4 flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-bold capitalize">{disease.id.replaceAll("-", " ")}</h1><p className="mt-1 text-sm text-[#6f6b80]">Edit bilingual educational content, symptoms, and citations.</p></div><div className="rounded-xl bg-[#f0eafa] px-3 py-2 font-mono text-xs text-[#512b91]"><LockKeyhole className="mr-1 inline" size={14}/>Class {disease.model_class_index}: {disease.model_label} (read-only)</div></header><form action={saveContent} className="mt-6 grid gap-5"><input type="hidden" name="id" value={disease.id}/><input type="hidden" name="idempotency_key" value={randomUUID()}/>{(["en","fil"] as const).map((language)=>{const content=disease.disease_localizations?.find((row)=>row.language_tag===language); const signs=(disease.disease_signs??[]).filter((row)=>row.language_tag===language).sort((a,b)=>a.position-b.position).map((row)=>row.text); const reference=disease.disease_references?.find((row)=>row.language_tag===language && row.position===0); return <section className="surface p-5" key={language}><h2 className="text-xl font-bold">{language === "en" ? "English" : "Filipino"}</h2><div className="mt-4 grid gap-4 sm:grid-cols-2"><Field name={`${language}_name`} label="Name" value={content?.name}/><Field name={`${language}_symptom_preview`} label="Symptom preview" value={content?.symptom_preview}/></div><SignsArea name={`${language}_signs`} value={signs.join("\n")}/>{(["description","causes","recommended_action","prevention","guidance","when_to_act","disclaimer"] as const).map((field)=><Area key={field} name={`${language}_${field}`} label={field === "recommended_action" ? "Recommended action" : field.replaceAll("_"," ")} value={content?.[field]}/>) }<h3 className="mt-5 font-bold">Primary authoritative reference</h3><div className="mt-3 grid gap-4 sm:grid-cols-2"><Field name={`${language}_reference_publisher`} label="Publisher" value={reference?.publisher}/><Field name={`${language}_reference_title`} label="Title" value={reference?.title}/></div><Field name={`${language}_reference_url`} label="HTTPS URL" value={reference?.url}/></section>})}<FormSubmitButton label="Publish content update" pendingLabel="Publishing content" className="h-12 bg-[#512b91] px-5 text-white"/></form></div></AdminShell>;
 }
 
 function Field({name,label,value}:{name:string;label:string;value?:string}){return <label className="mt-3 grid gap-1.5 text-sm font-semibold">{label}<input required maxLength={label === "HTTPS URL" ? 2_048 : 500} name={name} defaultValue={value ?? ""} className="focus-ring min-h-11 rounded-xl border border-[#dcd8e4] px-3 font-normal"/></label>}

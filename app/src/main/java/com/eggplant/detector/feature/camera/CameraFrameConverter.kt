@@ -10,7 +10,10 @@ data class RotatedRgb(
 
 object CameraFrameConverter {
     /**
-     * CameraX RGBA_8888 exposes one plane in red, green, blue, alpha byte order.
+     * CameraX names the output format RGBA_8888, but its first analysis plane is
+     * physically packed as alpha, red, green, blue. Keep this conversion next to
+     * the CameraX-specific frame handling so Bitmap RGB paths cannot accidentally
+     * inherit the camera byte order.
      */
     fun rgbaToRgb(
         rgbaBytes: ByteArray,
@@ -32,13 +35,25 @@ object CameraFrameConverter {
         repeat(cropHeight) { y ->
             var source = (cropTop + y) * rowStride + cropLeft * 4
             repeat(cropWidth) {
-                rgb[destination++] = rgbaBytes[source]
-                rgb[destination++] = rgbaBytes[source + 1]
-                rgb[destination++] = rgbaBytes[source + 2]
+                rgb[destination++] = rgbaBytes[source + CAMERA_X_RED_OFFSET]
+                rgb[destination++] = rgbaBytes[source + CAMERA_X_GREEN_OFFSET]
+                rgb[destination++] = rgbaBytes[source + CAMERA_X_BLUE_OFFSET]
                 source += 4
             }
         }
         return rgb
+    }
+
+    /**
+     * Copies a CameraX plane only when a caller must use the non-direct/native
+     * fallback. The duplicate keeps the borrowed ImageProxy buffer position
+     * untouched, which is required before CameraX closes the frame.
+     */
+    fun copyRgbaPlane(buffer: ByteBuffer, byteCount: Int): ByteArray {
+        require(byteCount >= 0)
+        val source = buffer.duplicate()
+        require(source.remaining() >= byteCount) { "Camera frame buffer is incomplete." }
+        return ByteArray(byteCount).also(source::get)
     }
 
     fun rotateRgb(
@@ -124,9 +139,9 @@ object CameraFrameConverter {
                         val y = cropTop + (((blockY * 2 + sampleY + 0.5f) / 8f) * cropHeight)
                             .toInt().coerceIn(0, cropHeight - 1)
                         val offset = y * rowStride + x * 4
-                        val red = bytes.get(offset).toInt() and 0xff
-                        val green = bytes.get(offset + 1).toInt() and 0xff
-                        val blue = bytes.get(offset + 2).toInt() and 0xff
+                        val red = bytes.get(offset + CAMERA_X_RED_OFFSET).toInt() and 0xff
+                        val green = bytes.get(offset + CAMERA_X_GREEN_OFFSET).toInt() and 0xff
+                        val blue = bytes.get(offset + CAMERA_X_BLUE_OFFSET).toInt() and 0xff
                         luminance += (red * 299 + green * 587 + blue * 114) / 1000
                         samples += 1
                     }
@@ -137,4 +152,8 @@ object CameraFrameConverter {
         }
         return token
     }
+
+    private const val CAMERA_X_RED_OFFSET = 1
+    private const val CAMERA_X_GREEN_OFFSET = 2
+    private const val CAMERA_X_BLUE_OFFSET = 3
 }

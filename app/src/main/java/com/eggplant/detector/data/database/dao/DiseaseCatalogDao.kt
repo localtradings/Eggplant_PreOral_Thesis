@@ -45,20 +45,26 @@ interface DiseaseCatalogDao {
     @Query("DELETE FROM disease_references WHERE languageTag = :languageTag")
     suspend fun clearReferences(languageTag: String)
 
+    @Query("DELETE FROM treatments WHERE languageTag = :languageTag")
+    suspend fun clearTreatments(languageTag: String)
+
     @Transaction
     suspend fun replaceLocalizedContent(
         languageTag: String,
         diseases: List<DiseaseEntity>,
         localizations: List<DiseaseLocalizationEntity>,
         signs: List<DiseaseSignEntity>,
+        treatments: List<TreatmentEntity>,
         references: List<DiseaseReferenceEntity>,
     ) {
         upsertDiseases(diseases)
         clearLocalizations(languageTag)
         clearSigns(languageTag)
+        clearTreatments(languageTag)
         clearReferences(languageTag)
         upsertLocalizations(localizations)
         upsertSigns(signs)
+        upsertTreatments(treatments)
         upsertReferences(references)
     }
 

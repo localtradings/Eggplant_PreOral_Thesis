@@ -1,6 +1,7 @@
 package com.eggplant.detector.detection.api
 
 import com.eggplant.detector.detection.ncnn.NativeDetectionMapper
+import java.nio.ByteBuffer
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -42,6 +43,25 @@ class DetectionEngineContractTest {
             width = 2,
             height = 2,
             rgbBytes = ByteArray(11),
+            timestampMillis = 0,
+            source = InputSource.LIVE,
+            sceneToken = 1,
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `direct CameraX frame must be sliced to its plane origin`() {
+        val shiftedPlane = ByteBuffer.allocateDirect(17).apply {
+            position(1)
+            limit(17)
+        }
+
+        RgbaFrame(
+            width = 2,
+            height = 2,
+            rowStride = 8,
+            rgbaBytes = shiftedPlane,
+            rotationDegrees = 0,
             timestampMillis = 0,
             source = InputSource.LIVE,
             sceneToken = 1,

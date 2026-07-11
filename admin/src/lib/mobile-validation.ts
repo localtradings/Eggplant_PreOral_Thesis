@@ -27,12 +27,16 @@ export type ShareCompletion = {
 
 export type DiseaseRequestInput = {
   clientRequestId: string;
-  requestedName: string;
+  requestedName?: string;
   notes?: string;
   modelVersion: string;
   rightsConsent: boolean;
   trainingConsent: false;
-  photos: Array<{ contentLength: number; sha256: string }>;
+  photos: Array<{
+    contentLength: number;
+    sha256: string;
+    source: "live" | "capture";
+  }>;
 };
 
 export type ContentReportInput = {
@@ -175,12 +179,15 @@ export function validateDiseaseRequest(
   maximumBytes = MAX_UPLOAD_BYTES,
 ): ValidationResult<DiseaseRequestInput> {
   if (!isRecord(value)) return { ok: false };
-  const requestedName = boundedText(value.requestedName, 2, 120);
+  const requestedName =
+    value.requestedName == null || value.requestedName === ""
+      ? undefined
+      : boundedText(value.requestedName, 2, 120);
   const modelVersion = boundedText(value.modelVersion, 1, 100);
   const normalizedNotes =
     value.notes == null || value.notes === ""
       ? undefined
-      : boundedText(value.notes, 1, 2_000);
+      : boundedText(value.notes, 1, 200);
   const photos = Array.isArray(value.photos) ? value.photos : [];
   const validPhotos =
     photos.length >= 1 &&
@@ -193,12 +200,12 @@ export function validateDiseaseRequest(
         photo.contentLength >= 1 &&
         photo.contentLength <= maximumBytes &&
         typeof photo.sha256 === "string" &&
-        SHA256_PATTERN.test(photo.sha256),
+        SHA256_PATTERN.test(photo.sha256) &&
+        (photo.source === "live" || photo.source === "capture"),
     );
   if (
     typeof value.clientRequestId !== "string" ||
     !UUID_PATTERN.test(value.clientRequestId) ||
-    !requestedName ||
     !modelVersion ||
     value.rightsConsent !== true ||
     value.trainingConsent !== false ||
@@ -211,7 +218,7 @@ export function validateDiseaseRequest(
     ok: true,
     value: {
       clientRequestId: value.clientRequestId,
-      requestedName,
+      ...(requestedName ? { requestedName } : {}),
       notes: normalizedNotes ?? undefined,
       modelVersion,
       rightsConsent: true,
@@ -219,6 +226,7 @@ export function validateDiseaseRequest(
       photos: photos.map((photo) => ({
         contentLength: Number((photo as Record<string, unknown>).contentLength),
         sha256: String((photo as Record<string, unknown>).sha256).toLowerCase(),
+        source: (photo as Record<string, unknown>).source as "live" | "capture",
       })),
     },
   };

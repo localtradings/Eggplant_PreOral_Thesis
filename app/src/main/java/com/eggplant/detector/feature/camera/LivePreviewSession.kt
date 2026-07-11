@@ -68,4 +68,19 @@ internal class LivePreviewSession {
         }
         return LivePreviewOutcome.NoStableDetection
     }
+
+    /** Cancels without exposing a retained result to a stale UI callback. */
+    fun cancel() {
+        activeToken = 0L
+        bestDiseaseScene = null
+        bestDisease = null
+        bestHealthyScene = null
+        bestHealthy = null
+    }
+
+    /** A low-quality frame must not let an older healthy confirmation win on release. */
+    fun discardHealthy() {
+        bestHealthyScene = null
+        bestHealthy = null
+    }
 }

@@ -78,6 +78,11 @@
     <string name="delete">Delete</string>
     <string name="delete_shared_cloud_data">Delete my shared cloud data</string>
     <string name="delete_shared_cloud_data_body">This immediately unpublishes your Global Scans and queues deletion of your shared photos. Your offline history remains on this device.</string>
+    <string name="cloud_deletion_idle">No cloud deletion in progress</string>
+    <string name="cloud_deletion_queued">Shared cloud-data deletion queued</string>
+    <string name="cloud_deletion_processing">Unpublishing scans and deleting shared photos…</string>
+    <string name="cloud_deletion_completed">Shared cloud data deleted (%1$d scans)</string>
+    <string name="cloud_deletion_failed">Cloud deletion needs a retry</string>
     <string name="detection_status">Detection Status</string>
     <string name="model_pending">YOLO26m • Offline NCNN</string>
     <string name="scan_quality_tips">Scan Quality Tips</string>
@@ -102,6 +107,9 @@
     <string name="scan_result">Scan Result</string>
     <string name="save_history">Save to History</string>
     <string name="saving_history">Saving…</string>
+    <string name="saved_to_history">Saved to History</string>
+    <string name="save_history_succeeded">Saved to History. You can find this scan in My Scans.</string>
+    <string name="save_history_already_saved">This scan is already in My Scans.</string>
     <string name="save_history_failed">Could not save this scan. Your existing history is unchanged. Check available device storage and try again.</string>
     <string name="scan_again">Scan Again</string>
     <string name="signs_detected">Signs Detected</string>
@@ -129,6 +137,10 @@
     <string name="global_scans">Global Scans</string>
     <string name="community_rankings">Community rankings</string>
     <string name="global_scans_empty">No community scans are cached yet.</string>
+    <string name="global_scans_not_loaded">Global Scans have not been loaded yet.</string>
+    <string name="global_scans_refresh_failed">Could not refresh Global Scans. Showing any safely cached scans.</string>
+    <string name="load_more">Load more scans</string>
+    <string name="loading_more">Loading more scans…</string>
     <string name="shared_eggplant_photo">Shared eggplant leaf or fruit photo</string>
     <string name="global_scan_confidence_published">%1$d%% confidence • %2$s</string>
     <string name="symptoms">Symptoms</string>
@@ -144,14 +156,24 @@
     <string name="refresh">Refresh</string>
     <string name="last_updated_cached">Showing cached content</string>
     <string name="share_to_global">Share to Global</string>
+    <string name="share_status_queued">Global share queued. It will upload when the connection is ready.</string>
+    <string name="share_status_uploading">Uploading shared scan…</string>
+    <string name="share_status_retrying">Retrying Global share…</string>
+    <string name="share_status_completed">Shared to Global Scans.</string>
+    <string name="share_status_failed">Could not share this scan. Try again.</string>
+    <string name="share_status_cancelled">Global share cancelled.</string>
     <string name="request_this_disease">Request this disease</string>
     <string name="requested_disease_name">Requested disease name</string>
+    <string name="requested_disease_name_optional">Requested disease name (optional)</string>
+    <string name="request_name_not_provided">Name not provided</string>
     <string name="optional_notes">Optional notes</string>
+    <string name="request_notes_count">%1$d / %2$d characters</string>
     <string name="submit_request">Submit request</string>
     <string name="real_photo_required">The real plant photo from this result will be submitted privately. It will not be published or used for training.</string>
     <string name="request_photo_count">%1$d of %2$d real photos selected</string>
     <string name="add_request_photos">Add gallery photos</string>
     <string name="adding_photos">Adding photos…</string>
+    <string name="request_camera_only_photo">Only the real photo captured in this app is accepted. Gallery photos cannot be submitted.</string>
     <string name="retry">Retry</string>
 
     <string name="capture_scan">Capture scan</string>

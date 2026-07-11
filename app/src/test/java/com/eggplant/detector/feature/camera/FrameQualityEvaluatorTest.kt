@@ -57,6 +57,23 @@ class FrameQualityEvaluatorTest {
         )
     }
 
+    @Test
+    fun `quality evaluation uses CameraX ARGB order for heap backed fallback planes`() {
+        val plane = ByteBuffer.allocate(24 * 18 * 4)
+        repeat(24 * 18) { pixel ->
+            val offset = pixel * 4
+            plane.put(offset, 0)
+            plane.put(offset + 1, 20)
+            plane.put(offset + 2, 20)
+            plane.put(offset + 3, 20)
+        }
+        plane.position(0)
+        plane.limit(plane.capacity())
+
+        assertEquals(FrameQualityHint.LOW_LIGHT, FrameQualityEvaluator.evaluateRgba(plane, 24, 18, 96))
+        assertEquals(0, plane.position())
+    }
+
     private fun frame(width: Int, height: Int, alpha: Int = 255, value: (Int) -> Int): ByteBuffer =
         ByteBuffer.allocateDirect(width * height * 4).also { buffer ->
             repeat(width * height) { index ->
@@ -69,9 +86,10 @@ class FrameQualityEvaluatorTest {
 
     private fun putRgba(buffer: ByteBuffer, x: Int, y: Int, width: Int, component: Int, alpha: Int = 255) {
         val offset = (y * width + x) * 4
-        buffer.put(offset, component.toByte())
+        // CameraX OUTPUT_IMAGE_FORMAT_RGBA_8888 is packed as A/R/G/B.
+        buffer.put(offset, alpha.toByte())
         buffer.put(offset + 1, component.toByte())
         buffer.put(offset + 2, component.toByte())
-        buffer.put(offset + 3, alpha.toByte())
+        buffer.put(offset + 3, component.toByte())
     }
 }

@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   );
   if (!validation.ok) {
     return apiError(
-      "A disease name, rights consent, and one to three valid plant photos are required.",
+      "Rights consent and one to three valid in-app camera plant photos are required.",
       400,
       "invalid_disease_request",
     );
@@ -28,15 +28,16 @@ export async function POST(request: Request) {
   } catch {
     return apiError("Request protection is temporarily unavailable.", 503, "rate_limit_unavailable");
   }
-  const { data, error } = await supabase.rpc("create_disease_request_with_quota", {
+  const { data, error } = await supabase.rpc("create_disease_request_with_quota_v2", {
     p_owner_id: auth.user.id,
     p_client_request_id: body.clientRequestId,
-    p_requested_name: body.requestedName,
+    p_requested_name: body.requestedName ?? null,
     p_notes: body.notes ?? null,
     p_model_version: body.modelVersion,
     p_rights_consent: body.rightsConsent,
     p_training_consent: body.trainingConsent,
     p_photo_hashes: body.photos.map((photo) => photo.sha256),
+    p_photo_sources: body.photos.map((photo) => photo.source),
     p_rate_subject: rateSubject,
   });
   const result = data?.[0];

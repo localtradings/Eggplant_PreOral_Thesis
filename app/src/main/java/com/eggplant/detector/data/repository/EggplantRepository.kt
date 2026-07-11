@@ -15,6 +15,10 @@ import com.eggplant.detector.domain.model.GlobalScan
 import com.eggplant.detector.domain.model.GlobalRanking
 import com.eggplant.detector.domain.model.DiseaseRequest
 import com.eggplant.detector.domain.model.DiseaseReference
+import com.eggplant.detector.domain.model.CloudDeletionState
+import com.eggplant.detector.domain.model.GlobalFeedState
+import com.eggplant.detector.domain.model.SyncOutboxEvent
+import com.eggplant.detector.domain.model.SyncOutboxState
 import com.eggplant.detector.data.cloud.diseaseRequestPayload
 import com.eggplant.detector.data.cloud.globalSharePayload
 import com.eggplant.detector.data.cloud.sharingConsentPayload
@@ -23,7 +27,6 @@ import com.eggplant.detector.data.database.entity.DiseaseRequestEntity
 import com.eggplant.detector.data.database.entity.DiseaseRequestPhotoEntity
 import com.eggplant.detector.data.database.entity.SyncOutboxEntity
 import java.io.File
-import android.net.Uri
 import java.time.Instant
 import java.util.UUID
 import kotlinx.serialization.json.Json
@@ -47,6 +50,8 @@ class EggplantRepository(
     private val database: EggplantDatabase,
     private val snapshotStore: ScanSnapshotStore? = null,
     private val cloudSync: (() -> Unit)? = null,
+    private val cloudSyncLoadMore: (() -> Unit)? = null,
+    private val cloudConfigured: (() -> Boolean)? = null,
     private val sharePhotoRevalidator: SharePhotoRevalidator? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -89,18 +94,55 @@ class EggplantRepository(
         }
     }
 
-    val diseaseRequests: Flow<List<DiseaseRequest>> = database.cloudDao().observeDiseaseRequests().map { requests ->
-        requests.map { request ->
+    val diseaseRequests: Flow<List<DiseaseRequest>> = database.cloudDao().observeDiseaseRequestsWithPhotos().map { requests ->
+        requests.map { requestWithPhotos ->
+            val request = requestWithPhotos.request
             DiseaseRequest(
                 id = request.clientRequestId,
                 requestedName = request.requestedName,
                 notes = request.notes,
                 status = request.state,
-                photoPaths = emptyList(),
+                photoPaths = requestWithPhotos.photos.map(DiseaseRequestPhotoEntity::localPhotoPath),
                 adminNote = request.adminNote,
                 createdAt = request.createdAt,
                 uploadProgress = request.uploadProgress,
             )
+        }
+    }
+
+    val globalFeedState: Flow<GlobalFeedState> = database.cloudDao().observeGlobalFeedState().map { state ->
+        GlobalFeedState(
+            hasMore = state?.hasMore == true,
+            isLoading = state?.syncState == "LOADING",
+            lastUpdatedAt = state?.lastUpdatedAt,
+            lastErrorCode = state?.lastErrorCode,
+        )
+    }
+
+    val cloudDeletionState: Flow<CloudDeletionState> = database.cloudDao().observeCloudDeletionState().map { state ->
+        when (state?.state) {
+            null, "IDLE" -> CloudDeletionState.Idle
+            "QUEUED" -> CloudDeletionState.Queued
+            "PROCESSING", "UNPUBLISHED" -> CloudDeletionState.Processing
+            "COMPLETED" -> CloudDeletionState.Completed(deletionContributionCount(state.affectedContributionIdsJson))
+            else -> CloudDeletionState.Failed(state?.lastErrorCode)
+        }
+    }
+
+    val syncOutboxEvents: Flow<List<SyncOutboxEvent>> = database.cloudDao().observeOutbox().map { events ->
+        events.mapNotNull { event ->
+            runCatching {
+                SyncOutboxEvent(
+                    id = event.id,
+                    eventType = event.eventType,
+                    version = event.version,
+                    idempotencyKey = event.idempotencyKey,
+                    attempts = event.attempts,
+                    nextAttemptAt = event.nextAttemptAt,
+                    state = SyncOutboxState.valueOf(event.state),
+                    lastErrorCode = event.lastErrorCode,
+                )
+            }.getOrNull()
         }
     }
 
@@ -132,11 +174,6 @@ class EggplantRepository(
     suspend fun stageSnapshot(frame: com.eggplant.detector.detection.api.RgbFrame): String? =
         kotlinx.coroutines.withContext(Dispatchers.IO) { snapshotStore?.stage(frame) }
 
-    suspend fun stageDiseaseRequestPhoto(uri: Uri): String =
-        kotlinx.coroutines.withContext(Dispatchers.IO) {
-            requireNotNull(snapshotStore) { "Photo storage is unavailable." }.stageRequestPhoto(uri)
-        }
-
     fun discardSnapshot(path: String?) = snapshotStore?.discard(path)
 
     fun removeOutboxPhoto(path: String?) = snapshotStore?.removeOutboxPhoto(path)
@@ -153,6 +190,7 @@ class EggplantRepository(
 
     suspend fun enqueueGlobalShare(result: ScanResult, sharingEnabled: Boolean): ShareEligibility =
         sharingMutex.withLock {
+            requireCloudConfigured()
             val eligibility = shareEligibility(result, sharingEnabled)
             if (eligibility !is ShareEligibility.Eligible) return@withLock eligibility
             val dao = database.cloudDao()
@@ -222,6 +260,7 @@ class EggplantRepository(
         }
 
     suspend fun setSharingConsent(enabled: Boolean) = sharingMutex.withLock {
+        requireCloudConfigured()
         val dao = database.cloudDao()
         val pendingShares = if (enabled) emptyList() else dao.pendingShareEvents()
         val now = Instant.now().toString()
@@ -236,9 +275,22 @@ class EggplantRepository(
         cloudSync?.invoke()
     }
 
-    suspend fun enqueueDiseaseRequest(requestedName: String, notes: String?, photoPaths: List<String>, rightsConsent: Boolean): String {
-        require(requestedName.trim().length in 2..120)
+    suspend fun enqueueDiseaseRequest(
+        requestedName: String?,
+        notes: String?,
+        photoPaths: List<String>,
+        photoSources: List<String>,
+        rightsConsent: Boolean,
+    ): String {
+        requireCloudConfigured()
+        val normalizedName = requestedName?.trim()?.takeIf(String::isNotEmpty)
+        val normalizedNotes = notes?.trim()?.takeIf(String::isNotEmpty)
+        require(normalizedName == null || normalizedName.length in 2..120)
+        require(normalizedNotes == null || normalizedNotes.length <= DISEASE_REQUEST_NOTES_MAX_LENGTH)
         require(photoPaths.size in 1..3)
+        require(photoSources.size == photoPaths.size && photoSources.all { it in CAMERA_REQUEST_SOURCES }) {
+            "Disease-request photos must come from the in-app camera."
+        }
         require(rightsConsent)
         val id = UUID.randomUUID().toString()
         val now = Instant.now().toString()
@@ -250,15 +302,15 @@ class EggplantRepository(
             }
             database.withTransaction {
                 database.cloudDao().upsertDiseaseRequest(
-                    DiseaseRequestEntity(id, id, requestedName.trim(), notes?.trim()?.takeIf(String::isNotEmpty), "eggplant-yolo26m-v3-clean-768-20260707", rightsConsent, false, "QUEUED", 0f, null, now, now),
+                    DiseaseRequestEntity(id, id, normalizedName, normalizedNotes, "eggplant-yolo26m-v3-clean-768-20260707", rightsConsent, false, "QUEUED", 0f, null, now, now),
                 )
                 database.cloudDao().upsertDiseaseRequestPhotos(staged.mapIndexed { index, path ->
-                    DiseaseRequestPhotoEntity(id, index, path, null, "QUEUED", "pending", File(path).length())
+                    DiseaseRequestPhotoEntity(id, index, path, null, "QUEUED", "pending", File(path).length(), photoSources[index])
                 })
                 database.cloudDao().upsertOutbox(
                     SyncOutboxEntity(
                         id = UUID.randomUUID().toString(), eventType = "DISEASE_REQUEST", version = 1,
-                        idempotencyKey = "request:$id", payloadJson = diseaseRequestPayload(id, requestedName.trim(), notes, "eggplant-yolo26m-v3-clean-768-20260707", staged, rightsConsent, false).toString(),
+                        idempotencyKey = "request:$id", payloadJson = diseaseRequestPayload(id, normalizedName, normalizedNotes, "eggplant-yolo26m-v3-clean-768-20260707", staged, photoSources, rightsConsent, false).toString(),
                         state = "PENDING", attempts = 0, nextAttemptAt = now, createdAt = now, updatedAt = now,
                     ),
                 )
@@ -272,6 +324,7 @@ class EggplantRepository(
     }
 
     suspend fun retryDiseaseRequest(clientRequestId: String): Boolean {
+        requireCloudConfigured()
         val dao = database.cloudDao()
         val request = dao.diseaseRequestByClientId(clientRequestId) ?: return false
         val event = dao.outboxByIdempotencyKey("request:$clientRequestId") ?: return false
@@ -328,7 +381,30 @@ class EggplantRepository(
 
     fun refreshCloud() = cloudSync?.invoke()
 
+    fun loadMoreGlobalScans() = cloudSyncLoadMore?.invoke()
+
+    val isCloudConfigured: Boolean get() = cloudConfigured?.invoke() == true
+
+    suspend fun retryOutboxEvent(eventId: String): Boolean {
+        val dao = database.cloudDao()
+        val event = dao.outboxById(eventId) ?: return false
+        if (event.state !in setOf("FAILED", "RETRY")) return false
+        val now = Instant.now().toString()
+        dao.upsertOutbox(
+            event.copy(
+                state = "PENDING",
+                attempts = 0,
+                nextAttemptAt = now,
+                lastErrorCode = null,
+                updatedAt = now,
+            ),
+        )
+        cloudSync?.invoke()
+        return true
+    }
+
     suspend fun enqueueContentReport(scanId: String, reason: String, details: String? = null) {
+        requireCloudConfigured()
         require(reason in setOf("incorrect_result", "not_eggplant", "inappropriate", "duplicate", "other"))
         val now = Instant.now().toString()
         val idempotencyKey = "report:$scanId"
@@ -344,25 +420,36 @@ class EggplantRepository(
     }
 
     suspend fun enqueueCloudDeletion() {
+        requireCloudConfigured()
         val now = Instant.now().toString()
         cancelPendingShares()
         val existing = database.cloudDao().outboxByIdempotencyKey("deletion-request")
         if (existing != null && existing.state in setOf("PENDING", "RETRY", "UPLOADING")) return
-        database.cloudDao().upsertOutbox(
-            SyncOutboxEntity(
-                existing?.id ?: UUID.randomUUID().toString(),
-                "DELETION_REQUEST",
-                1,
-                "deletion-request",
-                "{}",
-                "PENDING",
-                0,
-                now,
-                null,
-                existing?.createdAt ?: now,
-                now,
-            ),
-        )
+        database.withTransaction {
+            database.cloudDao().upsertOutbox(
+                SyncOutboxEntity(
+                    existing?.id ?: UUID.randomUUID().toString(),
+                    "DELETION_REQUEST",
+                    1,
+                    "deletion-request",
+                    "{}",
+                    "PENDING",
+                    0,
+                    now,
+                    null,
+                    existing?.createdAt ?: now,
+                    now,
+                ),
+            )
+            database.cloudDao().upsertCloudDeletionState(
+                com.eggplant.detector.data.database.entity.CloudDeletionStateEntity(
+                    state = "QUEUED",
+                    affectedContributionIdsJson = "[]",
+                    lastErrorCode = null,
+                    updatedAt = now,
+                ),
+            )
+        }
         cloudSync?.invoke()
     }
 
@@ -410,6 +497,10 @@ class EggplantRepository(
             ),
         )
     }
+
+    private fun requireCloudConfigured() {
+        check(isCloudConfigured) { "Cloud is unavailable in this build." }
+    }
 }
 
 private val cacheJson = Json { ignoreUnknownKeys = true }
@@ -420,6 +511,12 @@ private fun SyncOutboxEntity.photoPathOrNull(): String? = runCatching {
 
 private const val SHARING_CONSENT_IDEMPOTENCY_KEY = "sharing-consent"
 private const val REVALIDATED_SHARE_EVENT_VERSION = 2
+private const val DISEASE_REQUEST_NOTES_MAX_LENGTH = 200
+private val CAMERA_REQUEST_SOURCES = setOf("live", "capture")
+
+private fun deletionContributionCount(idsJson: String): Int = runCatching {
+    cacheJson.parseToJsonElement(idsJson).jsonArray.size
+}.getOrDefault(0)
 
 private fun com.eggplant.detector.data.database.entity.GlobalScanCacheEntity.toDomain(catalog: List<Disease>): GlobalScan? = runCatching {
     val payload = cacheJson.parseToJsonElement(contentJson).jsonObject

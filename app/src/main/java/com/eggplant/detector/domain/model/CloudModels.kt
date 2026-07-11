@@ -27,6 +27,7 @@ data class SyncOutboxEvent(
     val attempts: Int,
     val nextAttemptAt: String,
     val state: SyncOutboxState,
+    val lastErrorCode: String? = null,
 )
 
 data class GlobalScan(
@@ -47,9 +48,24 @@ data class GlobalScan(
 
 data class GlobalRanking(val diseaseId: String, val diseaseName: String, val scanCount: Long)
 
+data class GlobalFeedState(
+    val hasMore: Boolean = false,
+    val isLoading: Boolean = false,
+    val lastUpdatedAt: String? = null,
+    val lastErrorCode: String? = null,
+)
+
+sealed interface CloudDeletionState {
+    data object Idle : CloudDeletionState
+    data object Queued : CloudDeletionState
+    data object Processing : CloudDeletionState
+    data class Completed(val contributionCount: Int) : CloudDeletionState
+    data class Failed(val code: String?) : CloudDeletionState
+}
+
 data class DiseaseRequest(
     val id: String,
-    val requestedName: String,
+    val requestedName: String?,
     val notes: String?,
     val status: String,
     val photoPaths: List<String>,
