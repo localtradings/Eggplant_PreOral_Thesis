@@ -11,6 +11,10 @@ set_target_properties(
 add_library(eggplant_detector SHARED detection/eggplant_ncnn_bridge.cpp)
 target_compile_features(eggplant_detector PRIVATE cxx_std_17)
 target_compile_options(eggplant_detector PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(
+    eggplant_detector
+    PRIVATE $<$<CONFIG:Debug>:EGGPLANT_DEBUG_TRACE=1>
+)
 target_include_directories(
     eggplant_detector
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn/include"

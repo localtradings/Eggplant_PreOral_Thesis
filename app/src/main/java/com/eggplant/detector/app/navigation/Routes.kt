@@ -15,7 +15,9 @@ object Routes {
     const val OFFLINE_STATUS = "offline-status"
     const val DISEASE_DETAIL = "disease/{diseaseId}"
     const val HISTORY_DETAIL = "history/{resultId}"
+    const val GLOBAL_SCAN_DETAIL = "global-scan/{scanId}"
 
     fun diseaseDetail(id: String): String = "disease/$id"
     fun historyDetail(id: String): String = "history/$id"
+    fun globalScanDetail(id: String): String = "global-scan/$id"
 }

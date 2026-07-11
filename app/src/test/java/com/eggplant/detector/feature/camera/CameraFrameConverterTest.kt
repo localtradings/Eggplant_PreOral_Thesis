@@ -4,6 +4,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
+import java.nio.ByteBuffer
 
 class CameraFrameConverterTest {
     @Test
@@ -16,6 +17,39 @@ class CameraFrameConverterTest {
         val rgb = CameraFrameConverter.rgbaToRgb(rgba, width = 2, height = 2, rowStride = 12)
 
         assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), rgb)
+    }
+
+    @Test
+    fun `camera crop is applied before rotation and inference`() {
+        val rgba = byteArrayOf(
+            1, 2, 3, 99, 4, 5, 6, 99, 7, 8, 9, 99,
+            10, 11, 12, 99, 13, 14, 15, 99, 16, 17, 18, 99,
+        )
+
+        val rgb = CameraFrameConverter.rgbaToRgb(
+            rgba,
+            width = 3,
+            height = 2,
+            rowStride = 12,
+            cropLeft = 1,
+            cropTop = 0,
+            cropWidth = 2,
+            cropHeight = 2,
+        )
+
+        assertArrayEquals(byteArrayOf(4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18), rgb)
+    }
+
+    @Test
+    fun `rgba conversion preserves red and ignores alpha`() {
+        val transparentRed = byteArrayOf(0x7f, 0x00, 0x00, 0x00)
+        val opaqueRed = byteArrayOf(0x7f, 0x00, 0x00, 0xff.toByte())
+
+        val transparentRgb = CameraFrameConverter.rgbaToRgb(transparentRed, width = 1, height = 1, rowStride = 4)
+        val opaqueRgb = CameraFrameConverter.rgbaToRgb(opaqueRed, width = 1, height = 1, rowStride = 4)
+
+        assertArrayEquals(byteArrayOf(0x7f, 0x00, 0x00), transparentRgb)
+        assertArrayEquals(transparentRgb, opaqueRgb)
     }
 
     @Test
@@ -57,6 +91,37 @@ class CameraFrameConverterTest {
         org.junit.Assert.assertNotEquals(
             CameraFrameConverter.sceneToken(dark, 8, 8),
             CameraFrameConverter.sceneToken(bright, 8, 8),
+        )
+    }
+
+    @Test
+    fun `scene token reads camera rgba channels and ignores alpha`() {
+        val dark = ByteBuffer.allocateDirect(8 * 8 * 4)
+        val bright = ByteBuffer.allocateDirect(8 * 8 * 4)
+        val transparentMidtone = ByteBuffer.allocateDirect(8 * 8 * 4)
+        val opaqueMidtone = ByteBuffer.allocateDirect(8 * 8 * 4)
+        repeat(8 * 8) { pixel ->
+            val offset = pixel * 4
+            dark.put(offset + 3, 0xff.toByte())
+            bright.put(offset, 0xff.toByte())
+            bright.put(offset + 1, 0xff.toByte())
+            bright.put(offset + 2, 0xff.toByte())
+            transparentMidtone.put(offset, 120)
+            transparentMidtone.put(offset + 1, 80)
+            transparentMidtone.put(offset + 2, 20)
+            opaqueMidtone.put(offset, 120)
+            opaqueMidtone.put(offset + 1, 80)
+            opaqueMidtone.put(offset + 2, 20)
+            opaqueMidtone.put(offset + 3, 0xff.toByte())
+        }
+
+        org.junit.Assert.assertNotEquals(
+            CameraFrameConverter.sceneTokenRgba(dark, 8, 8, 32),
+            CameraFrameConverter.sceneTokenRgba(bright, 8, 8, 32),
+        )
+        assertEquals(
+            CameraFrameConverter.sceneTokenRgba(transparentMidtone, 8, 8, 32),
+            CameraFrameConverter.sceneTokenRgba(opaqueMidtone, 8, 8, 32),
         )
     }
 }

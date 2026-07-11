@@ -71,6 +71,10 @@ internal fun CameraTopBar(state: CameraAnalysisState, onBack: () -> Unit, onTogg
 internal fun CameraStatus(state: CameraAnalysisState, modifier: Modifier = Modifier) {
     val text = when {
         state.error != null -> state.error
+        state.qualityHint == FrameQualityHint.LOW_LIGHT -> stringResource(R.string.quality_low_light)
+        state.qualityHint == FrameQualityHint.OVEREXPOSED -> stringResource(R.string.quality_overexposed)
+        state.qualityHint == FrameQualityHint.HOLD_STEADY -> stringResource(R.string.quality_hold_steady)
+        state.qualityHint == FrameQualityHint.TOO_CLOSE -> stringResource(R.string.quality_too_close)
         state.engineState == EngineState.UNINITIALIZED -> stringResource(R.string.loading_model)
         state.engineState != EngineState.READY -> stringResource(R.string.detection_unavailable)
         state.isStillImageProcessing -> stringResource(R.string.analyzing)
@@ -164,7 +168,7 @@ internal fun CameraBottomBar(
 }
 
 @Composable
-internal fun CameraPermissionRequired(permissionRequested: Boolean, onRequest: () -> Unit, onBack: () -> Unit) {
+internal fun CameraPermissionRequired(permissionRequested: Boolean, onRequest: () -> Unit, onGallery: () -> Unit, onBack: () -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(28.dp),
         verticalArrangement = Arrangement.Center,
@@ -176,6 +180,16 @@ internal fun CameraPermissionRequired(permissionRequested: Boolean, onRequest: (
             modifier = Modifier.padding(vertical = 16.dp),
         )
         Button(onClick = onRequest) { Text(stringResource(R.string.allow_camera)) }
+        androidx.compose.material3.OutlinedButton(onClick = onGallery, modifier = Modifier.padding(top = 10.dp)) {
+            Icon(Icons.Outlined.Collections, contentDescription = null)
+            Text("  ${stringResource(R.string.choose_gallery)}")
+        }
+        Text(
+            stringResource(R.string.gallery_no_camera_permission),
+            modifier = Modifier.padding(top = 12.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back)) }
     }
 }

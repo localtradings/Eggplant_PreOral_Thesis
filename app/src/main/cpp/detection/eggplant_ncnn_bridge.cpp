@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <android/trace.h>
 
 #include <algorithm>
 #include <cmath>
@@ -32,10 +33,36 @@ struct Engine {
     ncnn::Net net;
     int input_size;
     int class_count;
+    std::mutex inference_mutex;
+    std::vector<unsigned char> rgb_scratch;
 };
 
 std::mutex gpu_mutex;
 bool gpu_initialized = false;
+
+class DebugTraceSection {
+public:
+#if defined(EGGPLANT_DEBUG_TRACE)
+    explicit DebugTraceSection(const char* name) : active_(true) {
+        ATrace_beginSection(name);
+    }
+
+    void end() {
+        if (active_) {
+            ATrace_endSection();
+            active_ = false;
+        }
+    }
+
+    ~DebugTraceSection() { end(); }
+
+private:
+    bool active_;
+#else
+    explicit DebugTraceSection(const char*) {}
+    void end() {}
+#endif
+};
 
 int bounded_inference_thread_count() {
     const int cpu_count = std::max(1, ncnn::get_cpu_count());
@@ -95,6 +122,182 @@ std::string to_string(JNIEnv* env, jstring value) {
     return result;
 }
 
+jfloatArray detection_failure(JNIEnv* env, const char* code, const char* message) {
+    const std::string detail = std::string("NCNN_") + code + ": " + message;
+    jclass exception = env->FindClass("java/lang/IllegalStateException");
+    if (exception != nullptr) env->ThrowNew(exception, detail.c_str());
+    return nullptr;
+}
+
+jfloatArray run_detection(
+    JNIEnv* env,
+    Engine* engine,
+    const unsigned char* pixels,
+    int width,
+    int height,
+    float confidence_threshold
+) {
+    DebugTraceSection preprocess_trace("eggplant.native.preprocess");
+    const float scale = std::min(
+        static_cast<float>(engine->input_size) / static_cast<float>(width),
+        static_cast<float>(engine->input_size) / static_cast<float>(height)
+    );
+    const int resized_width = std::max(1, static_cast<int>(std::round(width * scale)));
+    const int resized_height = std::max(1, static_cast<int>(std::round(height * scale)));
+    ncnn::Mat resized = ncnn::Mat::from_pixels_resize(
+        pixels,
+        ncnn::Mat::PIXEL_RGB,
+        width,
+        height,
+        resized_width,
+        resized_height
+    );
+    if (resized.empty()) return detection_failure(env, "PREPROCESS_FAILED", "Could not resize the camera frame.");
+
+    const int pad_left = (engine->input_size - resized_width) / 2;
+    const int pad_top = (engine->input_size - resized_height) / 2;
+    ncnn::Mat input(engine->input_size, engine->input_size, 3);
+    if (input.empty()) return detection_failure(env, "ALLOCATION_FAILED", "Could not allocate the model input tensor.");
+    input.fill(114.0f);
+    for (int channel = 0; channel < 3; ++channel) {
+        const ncnn::Mat source_channel = resized.channel(channel);
+        ncnn::Mat target_channel = input.channel(channel);
+        for (int y = 0; y < resized_height; ++y) {
+            const float* source_row = source_channel.row(y);
+            float* target_row = target_channel.row(y + pad_top) + pad_left;
+            std::copy(source_row, source_row + resized_width, target_row);
+        }
+    }
+    float* input_values = input;
+    const size_t input_values_count = input.total();
+    for (size_t index = 0; index < input_values_count; ++index) {
+        input_values[index] *= 1.0f / 255.0f;
+    }
+    preprocess_trace.end();
+
+    DebugTraceSection inference_trace("eggplant.native.extract");
+    ncnn::Extractor extractor = engine->net.create_extractor();
+    if (extractor.input("in0", input) != 0) {
+        return detection_failure(env, "INPUT_FAILED", "NCNN rejected the input tensor.");
+    }
+    ncnn::Mat output;
+    if (extractor.extract("out0", output) != 0) {
+        return detection_failure(env, "EXTRACT_FAILED", "NCNN could not run model inference.");
+    }
+    if (output.empty() || output.h != 4 + engine->class_count || output.w <= 0) {
+        return detection_failure(env, "INVALID_OUTPUT", "The model output shape does not match its runtime manifest.");
+    }
+    inference_trace.end();
+
+    DebugTraceSection postprocess_trace("eggplant.native.postprocess");
+    std::vector<Proposal> proposals;
+    proposals.reserve(output.w);
+    for (int candidate = 0; candidate < output.w; ++candidate) {
+        int best_class = -1;
+        float best_confidence = confidence_threshold;
+        for (int class_index = 0; class_index < engine->class_count; ++class_index) {
+            const float confidence = output.row(4 + class_index)[candidate];
+            if (confidence >= best_confidence) {
+                best_confidence = confidence;
+                best_class = class_index;
+            }
+        }
+        if (best_class < 0) continue;
+
+        const float center_x = output.row(0)[candidate];
+        const float center_y = output.row(1)[candidate];
+        const float box_width = output.row(2)[candidate];
+        const float box_height = output.row(3)[candidate];
+        Proposal proposal{
+            best_class,
+            best_confidence,
+            std::clamp((center_x - box_width * 0.5f - pad_left) / scale, 0.0f, static_cast<float>(width)),
+            std::clamp((center_y - box_height * 0.5f - pad_top) / scale, 0.0f, static_cast<float>(height)),
+            std::clamp((center_x + box_width * 0.5f - pad_left) / scale, 0.0f, static_cast<float>(width)),
+            std::clamp((center_y + box_height * 0.5f - pad_top) / scale, 0.0f, static_cast<float>(height)),
+        };
+        if (proposal.right > proposal.left && proposal.bottom > proposal.top) proposals.push_back(proposal);
+    }
+
+    std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
+        return a.confidence > b.confidence;
+    });
+    std::vector<Proposal> selected;
+    selected.reserve(std::min(static_cast<int>(proposals.size()), kMaxDetections));
+    for (const Proposal& proposal : proposals) {
+        bool suppressed = false;
+        for (const Proposal& kept : selected) {
+            if (proposal.class_index == kept.class_index &&
+                intersection_over_union(proposal, kept) > kNmsThreshold) {
+                suppressed = true;
+                break;
+            }
+        }
+        if (!suppressed) selected.push_back(proposal);
+        if (static_cast<int>(selected.size()) >= kMaxDetections) break;
+    }
+
+    std::vector<float> flattened;
+    flattened.reserve(selected.size() * 6);
+    for (const Proposal& proposal : selected) {
+        flattened.insert(flattened.end(), {
+            static_cast<float>(proposal.class_index),
+            proposal.confidence,
+            proposal.left,
+            proposal.top,
+            proposal.right,
+            proposal.bottom,
+        });
+    }
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(flattened.size()));
+    if (result != nullptr && !flattened.empty()) {
+        env->SetFloatArrayRegion(result, 0, static_cast<jsize>(flattened.size()), flattened.data());
+    }
+    return result;
+}
+
+void convert_rgba_to_rotated_rgb(
+    Engine* engine,
+    const unsigned char* rgba,
+    int row_stride,
+    int crop_left,
+    int crop_top,
+    int crop_width,
+    int crop_height,
+    int rotation_degrees,
+    int& output_width,
+    int& output_height
+) {
+    output_width = rotation_degrees == 90 || rotation_degrees == 270 ? crop_height : crop_width;
+    output_height = rotation_degrees == 90 || rotation_degrees == 270 ? crop_width : crop_height;
+    engine->rgb_scratch.resize(static_cast<size_t>(output_width) * output_height * 3);
+    for (int source_y = 0; source_y < crop_height; ++source_y) {
+        const unsigned char* row = rgba +
+            static_cast<size_t>(crop_top + source_y) * row_stride +
+            static_cast<size_t>(crop_left) * 4;
+        for (int source_x = 0; source_x < crop_width; ++source_x) {
+            int target_x = source_x;
+            int target_y = source_y;
+            if (rotation_degrees == 90) {
+                target_x = crop_height - 1 - source_y;
+                target_y = source_x;
+            } else if (rotation_degrees == 180) {
+                target_x = crop_width - 1 - source_x;
+                target_y = crop_height - 1 - source_y;
+            } else if (rotation_degrees == 270) {
+                target_x = source_y;
+                target_y = crop_width - 1 - source_x;
+            }
+            const unsigned char* source = row + source_x * 4;
+            unsigned char* target = engine->rgb_scratch.data() +
+                (static_cast<size_t>(target_y) * output_width + target_x) * 3;
+            target[0] = source[0];
+            target[1] = source[1];
+            target[2] = source[2];
+        }
+    }
+}
+
 }  // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -145,127 +348,69 @@ Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detect(
     auto* engine = reinterpret_cast<Engine*>(handle);
     if (engine == nullptr || rgb_bytes == nullptr || width <= 0 || height <= 0 ||
         env->GetArrayLength(rgb_bytes) != width * height * 3) {
-        return env->NewFloatArray(0);
+        return detection_failure(env, "INVALID_INPUT", "RGB frame dimensions or buffer length are invalid.");
     }
-
-    configure_stable_cpu_runtime();
-
+    std::lock_guard<std::mutex> lock(engine->inference_mutex);
     jboolean copied = JNI_FALSE;
     auto* pixels = reinterpret_cast<unsigned char*>(env->GetByteArrayElements(rgb_bytes, &copied));
-    if (pixels == nullptr) return env->NewFloatArray(0);
-
-    const float scale = std::min(
-        static_cast<float>(engine->input_size) / static_cast<float>(width),
-        static_cast<float>(engine->input_size) / static_cast<float>(height)
-    );
-    const int resized_width = std::max(1, static_cast<int>(std::round(width * scale)));
-    const int resized_height = std::max(1, static_cast<int>(std::round(height * scale)));
-    ncnn::Mat resized = ncnn::Mat::from_pixels_resize(
-        pixels,
-        ncnn::Mat::PIXEL_RGB,
-        width,
-        height,
-        resized_width,
-        resized_height
-    );
+    if (pixels == nullptr) return detection_failure(env, "BUFFER_ACCESS_FAILED", "Could not access the RGB frame buffer.");
+    jfloatArray result = run_detection(env, engine, pixels, width, height, confidence_threshold);
     env->ReleaseByteArrayElements(rgb_bytes, reinterpret_cast<jbyte*>(pixels), JNI_ABORT);
-
-    const int pad_left = (engine->input_size - resized_width) / 2;
-    const int pad_right = engine->input_size - resized_width - pad_left;
-    const int pad_top = (engine->input_size - resized_height) / 2;
-    const int pad_bottom = engine->input_size - resized_height - pad_top;
-    (void)pad_right;
-    (void)pad_bottom;
-    ncnn::Mat input(engine->input_size, engine->input_size, 3);
-    input.fill(114.0f);
-    for (int channel = 0; channel < 3; ++channel) {
-        const ncnn::Mat source_channel = resized.channel(channel);
-        ncnn::Mat target_channel = input.channel(channel);
-        for (int y = 0; y < resized_height; ++y) {
-            const float* source_row = source_channel.row(y);
-            float* target_row = target_channel.row(y + pad_top) + pad_left;
-            std::copy(source_row, source_row + resized_width, target_row);
-        }
-    }
-    float* input_values = input;
-    const size_t input_values_count = input.total();
-    for (size_t index = 0; index < input_values_count; ++index) {
-        input_values[index] *= 1.0f / 255.0f;
-    }
-
-    ncnn::Extractor extractor = engine->net.create_extractor();
-    extractor.input("in0", input);
-    ncnn::Mat output;
-    if (extractor.extract("out0", output) != 0 || output.h != 4 + engine->class_count) {
-        return env->NewFloatArray(0);
-    }
-
-    std::vector<Proposal> proposals;
-    proposals.reserve(output.w);
-    for (int candidate = 0; candidate < output.w; ++candidate) {
-        int best_class = -1;
-        float best_confidence = confidence_threshold;
-        for (int class_index = 0; class_index < engine->class_count; ++class_index) {
-            const float confidence = output.row(4 + class_index)[candidate];
-            if (confidence > best_confidence) {
-                best_confidence = confidence;
-                best_class = class_index;
-            }
-        }
-        if (best_class < 0) continue;
-
-        const float center_x = output.row(0)[candidate];
-        const float center_y = output.row(1)[candidate];
-        const float box_width = output.row(2)[candidate];
-        const float box_height = output.row(3)[candidate];
-        Proposal proposal{
-            best_class,
-            best_confidence,
-            std::clamp((center_x - box_width * 0.5f - pad_left) / scale, 0.0f, static_cast<float>(width)),
-            std::clamp((center_y - box_height * 0.5f - pad_top) / scale, 0.0f, static_cast<float>(height)),
-            std::clamp((center_x + box_width * 0.5f - pad_left) / scale, 0.0f, static_cast<float>(width)),
-            std::clamp((center_y + box_height * 0.5f - pad_top) / scale, 0.0f, static_cast<float>(height)),
-        };
-        if (proposal.right > proposal.left && proposal.bottom > proposal.top) {
-            proposals.push_back(proposal);
-        }
-    }
-
-    std::sort(proposals.begin(), proposals.end(), [](const Proposal& a, const Proposal& b) {
-        return a.confidence > b.confidence;
-    });
-    std::vector<Proposal> selected;
-    selected.reserve(std::min(static_cast<int>(proposals.size()), kMaxDetections));
-    for (const Proposal& proposal : proposals) {
-        bool suppressed = false;
-        for (const Proposal& kept : selected) {
-            if (proposal.class_index == kept.class_index &&
-                intersection_over_union(proposal, kept) > kNmsThreshold) {
-                suppressed = true;
-                break;
-            }
-        }
-        if (!suppressed) selected.push_back(proposal);
-        if (static_cast<int>(selected.size()) >= kMaxDetections) break;
-    }
-
-    std::vector<float> flattened;
-    flattened.reserve(selected.size() * 6);
-    for (const Proposal& proposal : selected) {
-        flattened.insert(flattened.end(), {
-            static_cast<float>(proposal.class_index),
-            proposal.confidence,
-            proposal.left,
-            proposal.top,
-            proposal.right,
-            proposal.bottom,
-        });
-    }
-    jfloatArray result = env->NewFloatArray(static_cast<jsize>(flattened.size()));
-    if (result != nullptr && !flattened.empty()) {
-        env->SetFloatArrayRegion(result, 0, static_cast<jsize>(flattened.size()), flattened.data());
-    }
     return result;
+}
+
+extern "C" JNIEXPORT jfloatArray JNICALL
+Java_com_eggplant_detector_detection_ncnn_NativeNcnnBridge_detectRgba(
+    JNIEnv* env,
+    jobject,
+    jlong handle,
+    jobject rgba_bytes,
+    jint width,
+    jint height,
+    jint row_stride,
+    jint crop_left,
+    jint crop_top,
+    jint crop_width,
+    jint crop_height,
+    jint rotation_degrees,
+    jfloat confidence_threshold
+) {
+    auto* engine = reinterpret_cast<Engine*>(handle);
+    if (engine == nullptr || rgba_bytes == nullptr || width <= 0 || height <= 0 ||
+        row_stride < width * 4 ||
+        crop_left < 0 || crop_top < 0 || crop_width <= 0 || crop_height <= 0 ||
+        crop_left + crop_width > width || crop_top + crop_height > height ||
+        (rotation_degrees != 0 && rotation_degrees != 90 && rotation_degrees != 180 && rotation_degrees != 270)) {
+        return detection_failure(env, "INVALID_INPUT", "Direct camera frame metadata is invalid.");
+    }
+    auto* pixels = reinterpret_cast<unsigned char*>(env->GetDirectBufferAddress(rgba_bytes));
+    const jlong capacity = env->GetDirectBufferCapacity(rgba_bytes);
+    if (pixels == nullptr || capacity < static_cast<jlong>(row_stride) * height) {
+        return detection_failure(env, "BUFFER_ACCESS_FAILED", "Camera frame is not a complete direct buffer.");
+    }
+    std::lock_guard<std::mutex> lock(engine->inference_mutex);
+    int output_width = 0;
+    int output_height = 0;
+    convert_rgba_to_rotated_rgb(
+        engine,
+        pixels,
+        row_stride,
+        crop_left,
+        crop_top,
+        crop_width,
+        crop_height,
+        rotation_degrees,
+        output_width,
+        output_height
+    );
+    return run_detection(
+        env,
+        engine,
+        engine->rgb_scratch.data(),
+        output_width,
+        output_height,
+        confidence_threshold
+    );
 }
 
 extern "C" JNIEXPORT void JNICALL

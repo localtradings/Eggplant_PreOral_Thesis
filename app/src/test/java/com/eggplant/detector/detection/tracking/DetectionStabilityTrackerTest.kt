@@ -18,15 +18,26 @@ class DetectionStabilityTrackerTest {
     private val healthyLeaf = detection(classIndex = 2, confidence = 0.91f)
 
     @Test
-    fun `detection becomes stable after two matching frames and 400 milliseconds`() {
+    fun `detection becomes stable after two consecutive matching frames`() {
         val tracker = DetectionStabilityTracker()
 
         assertFalse(tracker.update(frame(0, leafSpot)).stableDetections.isNotEmpty())
-        val stable = tracker.update(frame(400, leafSpot))
+        val stable = tracker.update(frame(150, leafSpot))
 
         assertEquals(listOf("leaf-spot"), stable.stableDetections.mapNotNull { it.modelClass.diseaseId })
         assertEquals(DetectionStatus.DISEASE_DETECTED, stable.status)
         assertTrue(stable.saveEligible)
+    }
+
+    @Test
+    fun `matching observations separated by a long gap start a new track`() {
+        val tracker = DetectionStabilityTracker()
+
+        tracker.update(frame(0, leafSpot))
+        val result = tracker.update(frame(800, leafSpot))
+
+        assertTrue(result.stableDetections.isEmpty())
+        assertEquals(DetectionStatus.SEARCHING, result.status)
     }
 
     @Test

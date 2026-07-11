@@ -12,6 +12,8 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -29,20 +31,26 @@ import com.eggplant.detector.detection.api.DetectionStatus
 import com.eggplant.detector.detection.api.EngineState
 import com.eggplant.detector.detection.api.InputSource
 import com.eggplant.detector.detection.api.RgbFrame
+import com.eggplant.detector.detection.api.RgbaDetectionEngine
+import com.eggplant.detector.detection.api.RgbaFrame
+import com.eggplant.detector.detection.api.WarmableDetectionEngine
 import com.eggplant.detector.detection.api.StabilityResult
 import com.eggplant.detector.detection.tracking.DetectionStabilityTracker
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class CameraController(
     context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val engine: DetectionEngine,
     private val onState: (CameraAnalysisState) -> Unit,
+    private val closeEngineOnClose: Boolean = true,
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val mainExecutor = ContextCompat.getMainExecutor(appContext)
@@ -54,6 +62,9 @@ class CameraController(
     private val galleryInFlight = AtomicBoolean(false)
     private val stillRequestToken = AtomicLong(0L)
     private val liveToken = AtomicLong(0L)
+    private val sessionLock = Any()
+    private val stateRevision = AtomicLong(0L)
+    private val deliveredRevision = AtomicLong(0L)
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var imageAnalysis: ImageAnalysis? = null
@@ -71,6 +82,21 @@ class CameraController(
     fun start(previewView: PreviewView) {
         if (closed || !startRequested.compareAndSet(false, true)) return
         emit(state.copy(engineState = EngineState.UNINITIALIZED, error = null))
+        val providerFuture = ProcessCameraProvider.getInstance(appContext)
+        providerFuture.addListener(
+            {
+                if (closed) return@addListener
+                runCatching {
+                    provider = providerFuture.get()
+                    // PreviewView's ViewPort is only available after layout. Posting the
+                    // bind keeps preview, analysis and capture on one crop contract.
+                    previewView.post { if (!closed) bindCamera(previewView) }
+                }.onFailure { error ->
+                    emit(state.copy(error = error.message ?: "Camera could not be opened."))
+                }
+            },
+            mainExecutor,
+        )
         enqueueAnalysis(
             onRejected = {
                 emit(state.copy(engineState = EngineState.FAILED, error = "Detection model could not be started."))
@@ -83,20 +109,27 @@ class CameraController(
                 return@enqueueAnalysis
             }
             emit(state.copy(engineState = EngineState.READY))
-            val providerFuture = ProcessCameraProvider.getInstance(appContext)
-            providerFuture.addListener(
-                {
-                    if (closed) return@addListener
-                    runCatching {
-                        provider = providerFuture.get()
-                        bindCamera(previewView)
-                    }.onFailure { error ->
-                        emit(state.copy(error = error.message ?: "Camera could not be opened."))
-                    }
-                },
-                mainExecutor,
-            )
+            warmDetectorInBackground()
         }
+    }
+
+    fun startDetectorOnly() {
+        if (closed || !startRequested.compareAndSet(false, true)) return
+        emit(state.copy(engineState = EngineState.UNINITIALIZED, error = null))
+        enqueueAnalysis(
+            onRejected = { emit(state.copy(engineState = EngineState.FAILED, error = "Detection model could not be started.")) },
+        ) {
+            val initialized = engine.initialize()
+            if (!closed) {
+                emit(state.copy(engineState = initialized, error = if (initialized == EngineState.READY) null else "Detection model could not be loaded."))
+                if (initialized == EngineState.READY) warmDetectorInBackground()
+            }
+        }
+    }
+
+    private fun warmDetectorInBackground() {
+        val warmable = engine as? WarmableDetectionEngine ?: return
+        enqueueAnalysis(onRejected = {}) { warmable.warmUp() }
     }
 
     private fun pauseAnalysis() {
@@ -111,26 +144,29 @@ class CameraController(
 
     fun startLivePreview() {
         if (closed || engine.state != EngineState.READY) return
-        val token = livePreviewSession.start()
-        liveToken.set(token)
-        liveStartedAtMillis = SystemClock.elapsedRealtime()
-        lastLiveAnalyzeStartedMillis = 0L
-        liveFirstFrameLogged = false
-        liveFirstFeedbackLogged = false
-        resumeAnalysis()
-        tracker.reset()
-        latestScene = null
-        emit(
-            state.copy(
-                livePreviewActive = true,
-                status = DetectionStatus.SEARCHING,
-                visibleDetections = emptyList(),
-                stableDetections = emptyList(),
-                confirmedDetections = emptyList(),
-                saveEligible = false,
-                error = null,
-            ),
-        )
+        synchronized(sessionLock) {
+            val token = livePreviewSession.start()
+            liveToken.set(token)
+            liveStartedAtMillis = SystemClock.elapsedRealtime()
+            lastLiveAnalyzeStartedMillis = 0L
+            liveFirstFrameLogged = false
+            liveFirstFeedbackLogged = false
+            resumeAnalysis()
+            tracker.reset()
+            latestScene = null
+            emit(
+                state.copy(
+                    livePreviewActive = true,
+                    status = DetectionStatus.SEARCHING,
+                    visibleDetections = emptyList(),
+                    stableDetections = emptyList(),
+                    confirmedDetections = emptyList(),
+                    saveEligible = false,
+                    qualityHint = null,
+                    error = null,
+                ),
+            )
+        }
     }
 
     fun stopLivePreview() {
@@ -138,51 +174,59 @@ class CameraController(
     }
 
     fun finishLivePreview(allowHealthy: Boolean): LivePreviewOutcome {
-        pauseAnalysis()
-        liveToken.set(0L)
-        liveStartedAtMillis = 0L
-        val outcome = livePreviewSession.stop(allowHealthy)
-        tracker.reset()
-        latestScene = null
-        emit(
-            state.copy(
-                livePreviewActive = false,
-                status = DetectionStatus.SEARCHING,
-                visibleDetections = emptyList(),
-                stableDetections = emptyList(),
-                confirmedDetections = emptyList(),
-                saveEligible = false,
-                error = null,
-            ),
-        )
-        return outcome
+        return synchronized(sessionLock) {
+            pauseAnalysis()
+            liveToken.set(0L)
+            liveStartedAtMillis = 0L
+            livePreviewSession.stop(allowHealthy).also {
+                tracker.reset()
+                latestScene = null
+                emit(
+                    state.copy(
+                        livePreviewActive = false,
+                        status = DetectionStatus.SEARCHING,
+                        visibleDetections = emptyList(),
+                        stableDetections = emptyList(),
+                        confirmedDetections = emptyList(),
+                        saveEligible = false,
+                        qualityHint = null,
+                        error = null,
+                    ),
+                )
+            }
+        }
     }
 
     fun updateClassPolicy(policy: DetectionClassPolicy) {
         if (closed) return
         if (classPolicy == policy) return
-        classPolicy = policy
-        tracker.reset()
-        latestScene = null
-        emit(
-            state.copy(
-                status = DetectionStatus.SEARCHING,
-                visibleDetections = emptyList(),
-                stableDetections = emptyList(),
-                confirmedDetections = emptyList(),
-                saveEligible = false,
-                error = null,
-            ),
-        )
+        synchronized(sessionLock) {
+            classPolicy = policy
+            tracker.reset()
+            latestScene = null
+            emit(
+                state.copy(
+                    status = DetectionStatus.SEARCHING,
+                    visibleDetections = emptyList(),
+                    stableDetections = emptyList(),
+                    confirmedDetections = emptyList(),
+                    saveEligible = false,
+                    qualityHint = null,
+                    error = null,
+                ),
+            )
+        }
     }
 
     fun markSaved() {
         if (closed) return
-        tracker.markSaved()
-        val scene = latestScene ?: return
-        val updated = scene.copy(stability = scene.stability.copy(saveEligible = false))
-        latestScene = updated
-        emit(state.copy(saveEligible = false))
+        synchronized(sessionLock) {
+            tracker.markSaved()
+            val scene = latestScene ?: return
+            val updated = scene.copy(stability = scene.stability.copy(saveEligible = false))
+            latestScene = updated
+            emit(state.copy(saveEligible = false))
+        }
     }
 
     fun toggleTorch() {
@@ -199,6 +243,15 @@ class CameraController(
             },
             mainExecutor,
         )
+    }
+
+    fun focusAt(x: Float, y: Float, previewView: PreviewView) {
+        val activeCamera = camera ?: return
+        val point = previewView.meteringPointFactory.createPoint(x, y)
+        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
+        activeCamera.cameraControl.startFocusAndMetering(action)
     }
 
     fun analyzeBitmap(bitmap: Bitmap, source: InputSource, onComplete: (Result<CameraScene>) -> Unit) {
@@ -223,7 +276,10 @@ class CameraController(
         }
     }
 
-    fun capturePhoto(onComplete: (Result<CameraScene>) -> Unit) {
+    fun capturePhoto(
+        emitScene: Boolean = true,
+        onComplete: (Result<CameraScene>) -> Unit,
+    ) {
         if (closed) {
             onComplete(Result.failure(IllegalStateException("Camera controller is closed.")))
             return
@@ -258,11 +314,17 @@ class CameraController(
                                 bitmap.recycle()
                             }
                         }
-                        completeStillRequest(requestToken, captureInFlight, result, onComplete)
+                        completeStillRequest(requestToken, captureInFlight, result, onComplete, emitScene)
                     }
 
                     override fun onError(exception: androidx.camera.core.ImageCaptureException) {
-                        completeStillRequest(requestToken, captureInFlight, Result.failure(exception), onComplete)
+                        completeStillRequest(
+                            requestToken,
+                            captureInFlight,
+                            Result.failure(exception),
+                            onComplete,
+                            emitScene,
+                        )
                     }
                 },
             )
@@ -282,14 +344,17 @@ class CameraController(
         inFlight: AtomicBoolean?,
         result: Result<CameraScene>,
         onComplete: (Result<CameraScene>) -> Unit,
+        emitScene: Boolean = true,
     ) {
-        if (isCurrentStillRequest(requestToken)) {
+        if (emitScene && isCurrentStillRequest(requestToken)) {
             result.onSuccess(::emitStillScene)
         }
         mainExecutor.execute {
             inFlight?.set(false)
             if (isCurrentStillRequest(requestToken)) {
                 onComplete(result)
+            } else {
+                onComplete(Result.failure(CancellationException("Still-image analysis was cancelled.")))
             }
         }
     }
@@ -345,13 +410,24 @@ class CameraController(
             .setResolutionSelector(captureResolutionSelector)
             .build()
         provider?.unbindAll()
-        camera = provider?.bindToLifecycle(
-            lifecycleOwner,
-            CameraSelector.DEFAULT_BACK_CAMERA,
-            preview,
-            analysis,
-            capture,
-        )
+        val viewPort = previewView.viewPort
+        camera = if (viewPort != null) {
+            val group = UseCaseGroup.Builder()
+                .setViewPort(viewPort)
+                .addUseCase(preview)
+                .addUseCase(analysis)
+                .addUseCase(capture)
+                .build()
+            provider?.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, group)
+        } else {
+            provider?.bindToLifecycle(
+                lifecycleOwner,
+                CameraSelector.DEFAULT_BACK_CAMERA,
+                preview,
+                analysis,
+                capture,
+            )
+        }
         imageAnalysis = analysis
         imageCapture = capture
         val supportsTorch = camera?.cameraInfo?.hasFlashUnit() == true
@@ -359,36 +435,104 @@ class CameraController(
     }
 
     private fun analyzeImage(image: ImageProxy) {
+        val token = liveToken.get()
         try {
-            val token = liveToken.get()
             val now = SystemClock.elapsedRealtime()
             if (closed || paused || token == 0L || engine.state != EngineState.READY) return
             if (now - lastLiveAnalyzeStartedMillis < LIVE_FRAME_THROTTLE_MILLIS) return
             lastLiveAnalyzeStartedMillis = now
             val conversionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
             val plane = image.planes.firstOrNull() ?: return
-            val buffer = plane.buffer.duplicate().apply { rewind() }
-            val rgba = ByteArray(buffer.remaining()).also(buffer::get)
-            val rgb = CameraFrameConverter.rgbaToRgb(rgba, image.width, image.height, plane.rowStride)
-            val rotated = CameraFrameConverter.rotateRgb(
-                rgb,
+            val sourceBuffer = plane.buffer.slice()
+            val crop = image.cropRect
+            val cropWidth = crop.width()
+            val cropHeight = crop.height()
+            if (cropWidth <= 0 || cropHeight <= 0) return
+            val frameQuality = FrameQualityEvaluator.evaluateRgba(
+                sourceBuffer,
                 image.width,
                 image.height,
-                image.imageInfo.rotationDegrees,
+                plane.rowStride,
+                crop.left,
+                crop.top,
+                cropWidth,
+                cropHeight,
             )
-            val rgbFrame = RgbFrame(
-                width = rotated.width,
-                height = rotated.height,
-                rgbBytes = rotated.rgbBytes,
-                timestampMillis = now,
-                source = InputSource.LIVE,
-                sceneToken = CameraFrameConverter.sceneToken(rotated.rgbBytes, rotated.width, rotated.height),
-            )
+            val rotationDegrees = image.imageInfo.rotationDegrees
+            val outputWidth = if (rotationDegrees in setOf(90, 270)) cropHeight else cropWidth
+            val outputHeight = if (rotationDegrees in setOf(90, 270)) cropWidth else cropHeight
+            val directEngine = engine as? RgbaDetectionEngine
+            val directFrame = if (sourceBuffer.isDirect && directEngine != null) {
+                RgbaFrame(
+                    width = image.width,
+                    height = image.height,
+                    rowStride = plane.rowStride,
+                    rgbaBytes = sourceBuffer,
+                    cropLeft = crop.left,
+                    cropTop = crop.top,
+                    cropWidth = cropWidth,
+                    cropHeight = cropHeight,
+                    rotationDegrees = rotationDegrees,
+                    timestampMillis = now,
+                    source = InputSource.LIVE,
+                    sceneToken = CameraFrameConverter.sceneTokenRgba(
+                        sourceBuffer,
+                        image.width,
+                        image.height,
+                        plane.rowStride,
+                        crop.left,
+                        crop.top,
+                        cropWidth,
+                        cropHeight,
+                    ),
+                )
+            } else {
+                null
+            }
+            val fallbackRgb = if (directFrame == null) {
+                val rgba = ByteArray(sourceBuffer.remaining()).also(sourceBuffer::get)
+                val rgb = CameraFrameConverter.rgbaToRgb(
+                    rgba,
+                    image.width,
+                    image.height,
+                    plane.rowStride,
+                    crop.left,
+                    crop.top,
+                    cropWidth,
+                    cropHeight,
+                )
+                CameraFrameConverter.rotateRgb(rgb, cropWidth, cropHeight, rotationDegrees)
+            } else {
+                null
+            }
+            val sceneToken = directFrame?.sceneToken
+                ?: CameraFrameConverter.sceneToken(requireNotNull(fallbackRgb).rgbBytes, outputWidth, outputHeight)
             val conversionMillis = (SystemClock.elapsedRealtimeNanos() - conversionStartedAtNanos) / 1_000_000
-            val rawDetection = engine.detect(rgbFrame).getOrThrow()
-            if (!isCurrentLiveRequest(token)) return
-            val detection = gateDetections(rawDetection)
-            val stability = tracker.update(detection)
+            val rawDetection = if (directFrame != null) {
+                requireNotNull(directEngine).detectRgba(directFrame).getOrThrow()
+            } else {
+                val rotated = requireNotNull(fallbackRgb)
+                engine.detect(
+                    RgbFrame(
+                        width = rotated.width,
+                        height = rotated.height,
+                        rgbBytes = rotated.rgbBytes,
+                        timestampMillis = now,
+                        source = InputSource.LIVE,
+                        sceneToken = sceneToken,
+                    ),
+                ).getOrThrow()
+            }
+            val liveUpdate = synchronized(sessionLock) {
+                if (!isCurrentLiveRequest(token)) return@synchronized null
+                val detection = gateDetections(rawDetection)
+                val stability = tracker.update(detection)
+                detection to stability
+            } ?: return
+            val (detection, stability) = liveUpdate
+            val closeUp = detection.detections.maxOfOrNull {
+                (it.bounds.right - it.bounds.left) * (it.bounds.bottom - it.bounds.top)
+            }?.let { it > .82f } == true
             logLiveLatencyIfNeeded(
                 token = token,
                 analyzeStartedAtMillis = now,
@@ -397,26 +541,66 @@ class CameraController(
                 stability = stability,
                 conversionMillis = conversionMillis,
             )
-            val scene = CameraScene(rgbFrame, detection, stability)
-            latestScene = scene
-            livePreviewSession.record(token, scene)
-            emit(
-                state.copy(
-                    engineState = EngineState.READY,
-                    status = stability.status,
-                    visibleDetections = stability.visibleDetections,
-                    stableDetections = stability.stableDetections,
-                    confirmedDetections = stability.confirmedDetections,
-                    saveEligible = stability.saveEligible,
-                    inferenceMillis = detection.inferenceMillis,
-                    frameWidth = rotated.width,
-                    frameHeight = rotated.height,
-                    livePreviewActive = true,
-                    error = null,
-                ),
-            )
+            if (stability.visibleDetections.isNotEmpty() || stability.confirmedDetections.isNotEmpty()) {
+                val rotated = fallbackRgb ?: run {
+                    val bytes = ByteArray(sourceBuffer.capacity()).also { destination ->
+                        val duplicate = sourceBuffer.duplicate().apply { position(0) }
+                        duplicate.get(destination)
+                    }
+                    val rgb = CameraFrameConverter.rgbaToRgb(
+                        bytes,
+                        image.width,
+                        image.height,
+                        plane.rowStride,
+                        crop.left,
+                        crop.top,
+                        cropWidth,
+                        cropHeight,
+                    )
+                    CameraFrameConverter.rotateRgb(rgb, cropWidth, cropHeight, rotationDegrees)
+                }
+                val rgbFrame = RgbFrame(
+                    width = rotated.width,
+                    height = rotated.height,
+                    rgbBytes = rotated.rgbBytes,
+                    timestampMillis = now,
+                    source = InputSource.LIVE,
+                    sceneToken = sceneToken,
+                )
+                synchronized(sessionLock) {
+                    if (isCurrentLiveRequest(token)) {
+                        val scene = CameraScene(rgbFrame, detection, stability)
+                        latestScene = scene
+                        livePreviewSession.record(token, scene)
+                    }
+                }
+            }
+            synchronized(sessionLock) {
+                if (isCurrentLiveRequest(token)) {
+                    emit(
+                        state.copy(
+                            engineState = EngineState.READY,
+                            status = stability.status,
+                            visibleDetections = stability.visibleDetections,
+                            stableDetections = stability.stableDetections,
+                            confirmedDetections = stability.confirmedDetections,
+                            saveEligible = stability.saveEligible,
+                            inferenceMillis = detection.inferenceMillis,
+                            frameWidth = outputWidth,
+                            frameHeight = outputHeight,
+                            livePreviewActive = true,
+                            qualityHint = if (closeUp) FrameQualityHint.TOO_CLOSE else frameQuality,
+                            error = null,
+                        ),
+                    )
+                }
+            }
         } catch (error: Throwable) {
-            if (!closed) emit(state.copy(error = error.message ?: "Live detection failed."))
+            synchronized(sessionLock) {
+                if (isCurrentLiveRequest(token)) {
+                    emit(state.copy(error = error.message ?: "Live detection failed."))
+                }
+            }
         } finally {
             image.close()
         }
@@ -571,6 +755,7 @@ class CameraController(
                 frameWidth = scene.rgbFrame.width,
                 frameHeight = scene.rgbFrame.height,
                 livePreviewActive = false,
+                qualityHint = null,
                 error = null,
             ),
         )
@@ -578,9 +763,13 @@ class CameraController(
 
     private fun emit(newState: CameraAnalysisState) {
         if (closed) return
-        state = newState
+        val revision = stateRevision.incrementAndGet()
+        val versioned = newState.copy(revision = revision)
+        state = versioned
         mainExecutor.execute {
-            if (!closed) onState(newState)
+            if (!closed && deliveredRevision.getAndUpdate { previous -> maxOf(previous, revision) } <= revision) {
+                onState(versioned)
+            }
         }
     }
 
@@ -600,7 +789,7 @@ class CameraController(
             imageCapture = null
             provider = null
         }
-        engine.close()
+        if (closeEngineOnClose) engine.close()
         analysisExecutor.shutdownNow()
     }
 

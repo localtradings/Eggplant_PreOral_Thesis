@@ -13,6 +13,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import com.eggplant.detector.core.ui.motion.LocalEggplantMotion
 
 @Composable
 fun PrimaryButton(
@@ -22,12 +29,18 @@ fun PrimaryButton(
     icon: ImageVector? = null,
     enabled: Boolean = true,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val motion = LocalEggplantMotion.current
+    val scale by animateFloatAsState(if (pressed && motion.spatialMovement) .97f else 1f, motion.interruptibleSpring, label = "primaryPress")
     Button(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp),
+            .heightIn(min = 56.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+        interactionSource = interaction,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
     ) {

@@ -20,6 +20,10 @@ import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.Yard
+import androidx.compose.material.icons.outlined.Animation
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,6 +47,7 @@ import com.eggplant.detector.R
 import com.eggplant.detector.app.ThemePreference
 import com.eggplant.detector.core.ui.components.SettingsRow
 import com.eggplant.detector.core.ui.components.SettingsSwitchRow
+import com.eggplant.detector.domain.model.MotionPreference
 
 @Composable
 fun SettingsScreen(
@@ -57,8 +62,14 @@ fun SettingsScreen(
     val language by viewModel.languagePreference.collectAsState()
     val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
     val detectHealthyPlantEnabled by viewModel.detectHealthyPlantEnabled.collectAsState()
+    val autoSaveEnabled by viewModel.autoSaveEnabled.collectAsState()
+    val globalSharingEnabled by viewModel.globalSharingEnabled.collectAsState()
+    val motionPreference by viewModel.motionPreference.collectAsState()
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showMotionDialog by remember { mutableStateOf(false) }
+    var showSharingConsent by remember { mutableStateOf(false) }
+    var showCloudDeletion by remember { mutableStateOf(false) }
     val languageOptions = listOf(
         LanguagePreference.ENGLISH to stringResource(R.string.english),
         LanguagePreference.FILIPINO to stringResource(R.string.filipino),
@@ -67,6 +78,11 @@ fun SettingsScreen(
         ThemePreference.LIGHT to stringResource(R.string.light),
         ThemePreference.DARK to stringResource(R.string.dark),
         ThemePreference.SYSTEM to stringResource(R.string.system_default),
+    )
+    val motionOptions = listOf(
+        MotionPreference.SYSTEM to stringResource(R.string.motion_system),
+        MotionPreference.FULL to stringResource(R.string.motion_full),
+        MotionPreference.REDUCED to stringResource(R.string.motion_reduced),
     )
     Column(
         modifier = Modifier
@@ -98,6 +114,30 @@ fun SettingsScreen(
             HorizontalDivider()
             SettingsRow(stringResource(R.string.theme), Icons.Outlined.DarkMode, themeLabel(theme)) { showThemeDialog = true }
             HorizontalDivider()
+            SettingsRow(stringResource(R.string.motion), Icons.Outlined.Animation, motionLabel(motionPreference)) { showMotionDialog = true }
+            HorizontalDivider()
+            SettingsSwitchRow(
+                title = stringResource(R.string.global_sharing),
+                description = stringResource(R.string.global_sharing_description),
+                icon = Icons.Outlined.Public,
+                checked = globalSharingEnabled,
+                onCheckedChange = { enabled ->
+                    if (enabled) showSharingConsent = true else viewModel.setGlobalSharing(false)
+                },
+                enabledLabel = stringResource(R.string.on),
+                disabledLabel = stringResource(R.string.off),
+            )
+            HorizontalDivider()
+            SettingsSwitchRow(
+                title = stringResource(R.string.history_saving),
+                description = stringResource(R.string.automatic_save),
+                icon = Icons.Outlined.Save,
+                checked = autoSaveEnabled,
+                onCheckedChange = viewModel::setAutoSave,
+                enabledLabel = stringResource(R.string.on),
+                disabledLabel = stringResource(R.string.off),
+            )
+            HorizontalDivider()
             SettingsSwitchRow(
                 title = stringResource(R.string.detect_healthy_leaf),
                 description = stringResource(R.string.detect_healthy_leaf_description),
@@ -128,6 +168,8 @@ fun SettingsScreen(
             SettingsRow(stringResource(R.string.scan_quality_tips), Icons.Outlined.PhotoCamera, onClick = onScanTips)
             HorizontalDivider()
             SettingsRow(stringResource(R.string.data_privacy), Icons.Outlined.PrivacyTip, onClick = onPrivacy)
+            HorizontalDivider()
+            SettingsRow(stringResource(R.string.delete_shared_cloud_data), Icons.Outlined.DeleteForever, onClick = { showCloudDeletion = true })
             HorizontalDivider()
             SettingsRow(stringResource(R.string.help_faq), Icons.AutoMirrored.Outlined.HelpOutline, onClick = onHelp)
             HorizontalDivider()
@@ -162,6 +204,37 @@ fun SettingsScreen(
                 showThemeDialog = false
             },
             onDismiss = { showThemeDialog = false },
+        )
+    }
+    if (showMotionDialog) {
+        ChoiceDialog(
+            title = stringResource(R.string.motion),
+            options = motionOptions,
+            selected = motionPreference,
+            onSelect = { choice -> viewModel.setMotionPreference(choice); showMotionDialog = false },
+            onDismiss = { showMotionDialog = false },
+        )
+    }
+    if (showSharingConsent) {
+        AlertDialog(
+            onDismissRequest = { showSharingConsent = false },
+            title = { Text(stringResource(R.string.enable_global_sharing)) },
+            text = { Text(stringResource(R.string.global_sharing_consent)) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.setGlobalSharing(true); showSharingConsent = false }) {
+                    Text(stringResource(R.string.enable))
+                }
+            },
+            dismissButton = { TextButton(onClick = { showSharingConsent = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    if (showCloudDeletion) {
+        AlertDialog(
+            onDismissRequest = { showCloudDeletion = false },
+            title = { Text(stringResource(R.string.delete_shared_cloud_data)) },
+            text = { Text(stringResource(R.string.delete_shared_cloud_data_body)) },
+            confirmButton = { TextButton(onClick = { viewModel.deleteSharedCloudData(); showCloudDeletion = false }) { Text(stringResource(R.string.delete)) } },
+            dismissButton = { TextButton(onClick = { showCloudDeletion = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -201,4 +274,11 @@ private fun themeLabel(preference: ThemePreference): String = when (preference) 
     ThemePreference.LIGHT -> stringResource(R.string.light)
     ThemePreference.DARK -> stringResource(R.string.dark)
     ThemePreference.SYSTEM -> stringResource(R.string.system_default)
+}
+
+@Composable
+private fun motionLabel(preference: MotionPreference): String = when (preference) {
+    MotionPreference.SYSTEM -> stringResource(R.string.motion_system)
+    MotionPreference.FULL -> stringResource(R.string.motion_full)
+    MotionPreference.REDUCED -> stringResource(R.string.motion_reduced)
 }

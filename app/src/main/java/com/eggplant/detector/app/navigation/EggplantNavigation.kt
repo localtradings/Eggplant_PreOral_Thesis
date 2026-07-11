@@ -20,9 +20,12 @@ import androidx.navigation.compose.rememberNavController
 import com.eggplant.detector.app.EggplantAppViewModel
 import com.eggplant.detector.feature.camera.CameraScreen
 import com.eggplant.detector.feature.history.ScanHistoryDetailsScreen
+import com.eggplant.detector.feature.history.MyScanDetailPager
+import com.eggplant.detector.feature.history.GlobalScanDetailPager
 import com.eggplant.detector.feature.history.ScanHistoryScreen
 import com.eggplant.detector.feature.home.HomeScreen
 import com.eggplant.detector.feature.library.DiseaseDetailsScreen
+import com.eggplant.detector.feature.library.DiseaseDetailsPager
 import com.eggplant.detector.feature.library.DiseaseLibraryScreen
 import com.eggplant.detector.feature.information.AboutScreen
 import com.eggplant.detector.feature.information.HelpScreen
@@ -35,15 +38,21 @@ import com.eggplant.detector.feature.settings.SettingsScreen
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import com.eggplant.detector.R
+import com.eggplant.detector.core.ui.motion.LocalEggplantMotion
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 
 private val bottomRoutes = setOf(Routes.HOME, Routes.LIBRARY, Routes.HISTORY, Routes.SETTINGS)
 
 @Composable
 fun EggplantNavigation(viewModel: EggplantAppViewModel) {
+    val motion = LocalEggplantMotion.current
     val navController = rememberNavController()
     val history by viewModel.history.collectAsState()
     val catalog by viewModel.catalog.collectAsState()
     val currentResult by viewModel.currentResult.collectAsState()
+    val globalScans by viewModel.globalScans.collectAsState()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val showBottomBar = currentRoute in bottomRoutes
@@ -91,6 +100,10 @@ fun EggplantNavigation(viewModel: EggplantAppViewModel) {
             navController = navController,
             startDestination = Routes.HOME,
             modifier = Modifier.padding(padding).consumeWindowInsets(padding),
+            enterTransition = { fadeIn(tween(motion.standardMillis)) },
+            exitTransition = { fadeOut(tween(motion.fastMillis)) },
+            popEnterTransition = { fadeIn(tween(motion.standardMillis)) },
+            popExitTransition = { fadeOut(tween(motion.fastMillis)) },
         ) {
             composable(Routes.HOME) {
                 HomeScreen(
@@ -114,7 +127,7 @@ fun EggplantNavigation(viewModel: EggplantAppViewModel) {
             }
             composable(Routes.DISEASE_DETAIL) { entry ->
                 val disease = entry.arguments?.getString("diseaseId")?.let { id -> catalog.firstOrNull { it.id == id } }
-                DiseaseDetailsScreen(disease = disease, onBack = navController::popBackStack)
+                DiseaseDetailsPager(diseases = catalog, initialId = disease?.id, onBack = navController::popBackStack)
             }
             composable(Routes.CAMERA) {
                 CameraScreen(
@@ -148,15 +161,23 @@ fun EggplantNavigation(viewModel: EggplantAppViewModel) {
                 )
             }
             composable(Routes.HISTORY) {
-                ScanHistoryScreen(viewModel = viewModel) { result ->
-                    viewModel.openHistoryResult(result)
-                    navController.navigate(Routes.historyDetail(result.id))
-                }
+                ScanHistoryScreen(
+                    viewModel = viewModel,
+                    onResultClick = { result ->
+                        viewModel.openHistoryResult(result)
+                        navController.navigate(Routes.historyDetail(result.id))
+                    },
+                    onGlobalClick = { scan -> navController.navigate(Routes.globalScanDetail(scan.id)) },
+                )
             }
             composable(Routes.HISTORY_DETAIL) { entry ->
                 val id = entry.arguments?.getString("resultId")
                 val result = history.firstOrNull { it.id == id } ?: currentResult?.takeIf { it.id == id }
-                ScanHistoryDetailsScreen(result = result, onBack = navController::popBackStack)
+                MyScanDetailPager(results = history, initialId = result?.id ?: id, onBack = navController::popBackStack)
+            }
+            composable(Routes.GLOBAL_SCAN_DETAIL) { entry ->
+                val id = entry.arguments?.getString("scanId")
+                GlobalScanDetailPager(globalScans, id, navController::popBackStack, viewModel::reportGlobalScan)
             }
             composable(Routes.SETTINGS) {
                 SettingsScreen(

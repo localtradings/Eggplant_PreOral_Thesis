@@ -9,6 +9,10 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+.vercel/
+.playwright-cli/
+output/
+supabase/.temp/
 __pycache__/
 # Ignore newly generated model-development artifacts. The selected dataset
 # pointer and evaluation evidence already tracked under ml/ remain versioned.

@@ -14,6 +14,7 @@ data class CameraScene(
 )
 
 data class CameraAnalysisState(
+    val revision: Long = 0L,
     val engineState: EngineState = EngineState.UNINITIALIZED,
     val status: DetectionStatus = DetectionStatus.SEARCHING,
     val visibleDetections: List<DetectionBox> = emptyList(),
@@ -27,5 +28,6 @@ data class CameraAnalysisState(
     val torchEnabled: Boolean = false,
     val livePreviewActive: Boolean = false,
     val isStillImageProcessing: Boolean = false,
+    val qualityHint: FrameQualityHint? = null,
     val error: String? = null,
 )

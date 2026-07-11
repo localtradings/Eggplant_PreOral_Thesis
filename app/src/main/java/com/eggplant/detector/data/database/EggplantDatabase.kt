@@ -3,6 +3,7 @@ package com.eggplant.detector.data.database
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.eggplant.detector.data.database.dao.DiseaseCatalogDao
+import com.eggplant.detector.data.database.dao.CloudDao
 import com.eggplant.detector.data.database.dao.NotificationDao
 import com.eggplant.detector.data.database.dao.LegacyScanRecordDao
 import com.eggplant.detector.data.database.dao.ScanSessionDao
@@ -16,6 +17,12 @@ import com.eggplant.detector.data.database.entity.ScanDetectionEntity
 import com.eggplant.detector.data.database.entity.LegacyScanRecordEntity
 import com.eggplant.detector.data.database.entity.ScanSessionEntity
 import com.eggplant.detector.data.database.entity.TreatmentEntity
+import com.eggplant.detector.data.database.entity.DiseaseReferenceEntity
+import com.eggplant.detector.data.database.entity.SyncOutboxEntity
+import com.eggplant.detector.data.database.entity.GlobalScanCacheEntity
+import com.eggplant.detector.data.database.entity.GlobalRankingCacheEntity
+import com.eggplant.detector.data.database.entity.DiseaseRequestEntity
+import com.eggplant.detector.data.database.entity.DiseaseRequestPhotoEntity
 
 @Database(
     entities = [
@@ -28,8 +35,14 @@ import com.eggplant.detector.data.database.entity.TreatmentEntity
         TreatmentEntity::class,
         ScanSessionEntity::class,
         ScanDetectionEntity::class,
+        DiseaseReferenceEntity::class,
+        SyncOutboxEntity::class,
+        GlobalScanCacheEntity::class,
+        GlobalRankingCacheEntity::class,
+        DiseaseRequestEntity::class,
+        DiseaseRequestPhotoEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class EggplantDatabase : RoomDatabase() {
@@ -38,4 +51,5 @@ abstract class EggplantDatabase : RoomDatabase() {
     abstract fun notificationDao(): NotificationDao
     abstract fun catalogDao(): DiseaseCatalogDao
     abstract fun scanSessionDao(): ScanSessionDao
+    abstract fun cloudDao(): CloudDao
 }

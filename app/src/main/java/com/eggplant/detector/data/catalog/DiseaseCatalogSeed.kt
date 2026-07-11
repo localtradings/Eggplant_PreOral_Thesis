@@ -3,6 +3,7 @@ package com.eggplant.detector.data.catalog
 import com.eggplant.detector.data.database.entity.DiseaseEntity
 import com.eggplant.detector.data.database.entity.DiseaseLocalizationEntity
 import com.eggplant.detector.data.database.entity.DiseaseSignEntity
+import com.eggplant.detector.data.database.entity.DiseaseReferenceEntity
 import com.eggplant.detector.data.database.entity.TreatmentEntity
 import com.eggplant.detector.detection.ncnn.ModelMetadata
 
@@ -11,6 +12,7 @@ data class DiseaseCatalogSeed(
     val localizations: List<DiseaseLocalizationEntity>,
     val signs: List<DiseaseSignEntity>,
     val treatments: List<TreatmentEntity>,
+    val references: List<DiseaseReferenceEntity>,
 ) {
     companion object {
         fun create(): DiseaseCatalogSeed {
@@ -34,6 +36,7 @@ data class DiseaseCatalogSeed(
             }
             val localizations = diseasesByLanguage.flatMap { (languageTag, localizedDiseases) ->
                 localizedDiseases.map { disease ->
+                    val education = DiseaseEducationCatalog.get(disease.id, languageTag)
                     DiseaseLocalizationEntity(
                         diseaseId = disease.id,
                         languageTag = languageTag,
@@ -41,6 +44,10 @@ data class DiseaseCatalogSeed(
                         description = disease.symptomPreview,
                         symptomPreview = disease.symptomPreview,
                         prevention = disease.prevention,
+                        causes = education.causes,
+                        guidance = education.guidance,
+                        whenToAct = education.whenToAct,
+                        disclaimer = education.disclaimer,
                     )
                 }
             }
@@ -62,7 +69,21 @@ data class DiseaseCatalogSeed(
                     )
                 }
             }
-            return DiseaseCatalogSeed(diseases, localizations, signs, treatments)
+            val references = diseasesByLanguage.flatMap { (languageTag, localizedDiseases) ->
+                localizedDiseases.flatMap { disease ->
+                    DiseaseEducationCatalog.get(disease.id, languageTag).references.mapIndexed { index, reference ->
+                        DiseaseReferenceEntity(
+                            diseaseId = disease.id,
+                            languageTag = languageTag,
+                            position = index,
+                            publisher = reference.publisher,
+                            title = reference.title,
+                            url = reference.url,
+                        )
+                    }
+                }
+            }
+            return DiseaseCatalogSeed(diseases, localizations, signs, treatments, references)
         }
     }
 }

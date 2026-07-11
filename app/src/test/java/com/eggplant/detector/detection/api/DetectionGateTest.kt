@@ -62,14 +62,14 @@ class DetectionGateTest {
     }
 
     @Test
-    fun `source specific box area limits reject tiny and oversized detections`() {
+    fun `source specific box area limits reject tiny detections but allow close ups`() {
         assertFalse(
             DetectionGate.evaluate(
                 detection(classIndex = 5, confidence = 0.9f, left = 0.0f, top = 0.0f, right = 0.04f, bottom = 0.04f),
                 InputSource.LIVE,
             ).accepted,
         )
-        assertFalse(
+        assertTrue(
             DetectionGate.evaluate(
                 detection(classIndex = 5, confidence = 0.9f, left = 0.0f, top = 0.0f, right = 0.99f, bottom = 0.99f),
                 InputSource.LIVE,
@@ -81,7 +81,7 @@ class DetectionGateTest {
                 InputSource.GALLERY,
             ).accepted,
         )
-        assertFalse(
+        assertTrue(
             DetectionGate.evaluate(
                 detection(classIndex = 5, confidence = 0.9f, left = 0.0f, top = 0.0f, right = 0.93f, bottom = 0.93f),
                 InputSource.GALLERY,

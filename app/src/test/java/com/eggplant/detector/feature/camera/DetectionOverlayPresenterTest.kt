@@ -23,7 +23,7 @@ class DetectionOverlayPresenterTest {
         ).single()
 
         assertEquals(OverlayPhase.TENTATIVE, tentative.phase)
-        assertEquals(null, tentative.label)
+        assertEquals("Possible Leaf Spot", tentative.label)
 
         val confirmed = presentOverlayDetections(
             visible = listOf(leafSpot),

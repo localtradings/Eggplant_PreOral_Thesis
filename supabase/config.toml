@@ -1,0 +1,25 @@
+project_id = "eggplant-disease-detector-prod"
+
+[storage.vector]
+enabled = false
+max_buckets = 10
+max_indexes = 5
+
+[auth]
+enabled = true
+site_url = "https://eggplant-disease-admin.vercel.app"
+additional_redirect_urls = ["https://eggplant-disease-admin.vercel.app/auth/callback"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = true
+enable_manual_linking = false
+
+[auth.rate_limit]
+anonymous_users = 10
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+double_confirm_changes = true
+secure_password_change = true
+max_frequency = "1m"

@@ -12,6 +12,7 @@ import com.eggplant.detector.data.database.entity.AppSettingsEntity
 import com.eggplant.detector.data.database.EggplantDatabase
 import com.eggplant.detector.data.database.migration.MIGRATION_1_TO_2
 import com.eggplant.detector.data.database.migration.MIGRATION_2_TO_3
+import com.eggplant.detector.data.database.migration.MIGRATION_3_TO_4
 import com.eggplant.detector.data.database.entity.NotificationStateEntity
 import com.eggplant.detector.data.database.entity.ScanDetectionEntity
 import com.eggplant.detector.data.database.entity.LegacyScanRecordEntity
@@ -84,7 +85,7 @@ class LocalDatabaseTest {
     @Test
     fun catalogAndGroupedScanRelationsPersist() = runBlocking {
         val seed = DiseaseCatalogSeed.create()
-        database.catalogDao().upsertCatalog(seed.diseases, seed.localizations, seed.signs, seed.treatments)
+        database.catalogDao().upsertCatalog(seed.diseases, seed.localizations, seed.signs, seed.treatments, seed.references)
         database.scanSessionDao().insertSessionWithDetections(
             ScanSessionEntity(
                 id = "session-1",
@@ -180,6 +181,52 @@ class LocalDatabaseTest {
                 assertEquals(0, cursor.getInt(3))
                 assertEquals(0, cursor.getInt(4))
             }
+        }
+    }
+
+    @Test
+    fun migrationThreeToFourPreservesPopulatedHistoryAndAddsCloudDefaults() {
+        val databaseName = "migration-3-4"
+        migrationHelper.createDatabase(databaseName, 3).apply {
+            execSQL("INSERT INTO app_settings (id, languageTag, theme, unitSystem, autoSaveEnabled, detectHealthyLeafEnabled, detectHealthyPlantEnabled) VALUES (1, 'fil', 'DARK', 'SYSTEM', 1, 1, 0)")
+            execSQL("INSERT INTO diseases (id, modelClassIndex, modelLabel, category, artworkKey) VALUES ('leaf-spot', 5, 'Leaf-Spot', 'LEAF_DISEASE', 'leaf-spot')")
+            execSQL("INSERT INTO disease_localizations (diseaseId, languageTag, name, description, symptomPreview, prevention) VALUES ('leaf-spot', 'en', 'Leaf Spot', 'spots', 'spots', 'airflow')")
+            execSQL("INSERT INTO scan_sessions (id, source, startedAt, savedAt, imagePath, modelVersion, saveMode) VALUES ('scan-3', 'CAPTURE', '2026-07-10T10:00:00', '2026-07-10T10:00:01', NULL, 'model', 'MANUAL')")
+            execSQL("INSERT INTO scan_detections (id, sessionId, diseaseId, modelClassIndex, modelLabel, confidence, `left`, `top`, `right`, `bottom`, detectedAt) VALUES ('box-3', 'scan-3', 'leaf-spot', 5, 'Leaf-Spot', .8, .1, .1, .5, .5, '2026-07-10T10:00:01')")
+            close()
+        }
+        migrationHelper.runMigrationsAndValidate(databaseName, 4, true, MIGRATION_3_TO_4).use { migrated ->
+            migrated.query("SELECT languageTag, autoSaveEnabled, globalSharingEnabled, motionPreference, contentSyncVersion FROM app_settings WHERE id = 1").use { cursor ->
+                assertTrue(cursor.moveToFirst()); assertEquals("fil", cursor.getString(0)); assertEquals(1, cursor.getInt(1)); assertEquals(0, cursor.getInt(2)); assertEquals("SYSTEM", cursor.getString(3)); assertEquals(0, cursor.getInt(4))
+            }
+            migrated.query("SELECT COUNT(*) FROM scan_detections WHERE sessionId = 'scan-3'").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(1, cursor.getInt(0)) }
+            migrated.query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('sync_outbox','global_scan_cache','disease_requests','disease_request_photos')").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(4, cursor.getInt(0)) }
+        }
+    }
+
+    @Test
+    fun migrationTwoToFourPreservesPopulatedSettings() {
+        val databaseName = "migration-2-4"
+        migrationHelper.createDatabase(databaseName, 2).apply {
+            execSQL("INSERT INTO app_settings (id, languageTag, theme, unitSystem, autoSaveEnabled) VALUES (1, 'en', 'LIGHT', 'SYSTEM', 1)")
+            close()
+        }
+        migrationHelper.runMigrationsAndValidate(databaseName, 4, true, MIGRATION_2_TO_3, MIGRATION_3_TO_4).use { migrated ->
+            migrated.query("SELECT theme, autoSaveEnabled, motionPreference FROM app_settings WHERE id = 1").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals("LIGHT", cursor.getString(0)); assertEquals(1, cursor.getInt(1)); assertEquals("SYSTEM", cursor.getString(2)) }
+        }
+    }
+
+    @Test
+    fun migrationOneToFourPreservesLegacyScan() {
+        val databaseName = "migration-1-4"
+        migrationHelper.createDatabase(databaseName, 1).apply {
+            execSQL("INSERT INTO app_settings (id, languageTag, theme, unitSystem) VALUES (1, 'en', 'SYSTEM', 'SYSTEM')")
+            execSQL("INSERT INTO scan_records (id, diseaseId, category, confidence, scannedAt, source, modelVersion) VALUES ('legacy-4', 'leaf-spot', 'LEAF_DISEASE', 91, '2026-07-10T09:00:00', 'camera', 'legacy-model')")
+            close()
+        }
+        migrationHelper.runMigrationsAndValidate(databaseName, 4, true, MIGRATION_1_TO_2, MIGRATION_2_TO_3, MIGRATION_3_TO_4).use { migrated ->
+            migrated.query("SELECT COUNT(*) FROM scan_sessions WHERE id = 'legacy-4'").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(1, cursor.getInt(0)) }
+            migrated.query("SELECT confidence FROM scan_detections WHERE sessionId = 'legacy-4'").use { cursor -> assertTrue(cursor.moveToFirst()); assertEquals(.91f, cursor.getFloat(0), .001f) }
         }
     }
 }

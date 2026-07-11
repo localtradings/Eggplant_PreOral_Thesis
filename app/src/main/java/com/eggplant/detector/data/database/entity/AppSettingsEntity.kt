@@ -13,6 +13,13 @@ data class AppSettingsEntity(
     @ColumnInfo(defaultValue = "0") val autoSaveEnabled: Boolean = false,
     @ColumnInfo(defaultValue = "0") val detectHealthyLeafEnabled: Boolean = false,
     @ColumnInfo(defaultValue = "0") val detectHealthyPlantEnabled: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val globalSharingEnabled: Boolean = false,
+    @ColumnInfo(defaultValue = "'SYSTEM'") val motionPreference: String = "SYSTEM",
+    val sharingConsentVersion: Int? = null,
+    val sharingConsentedAt: String? = null,
+    @ColumnInfo(defaultValue = "0") val contentSyncVersion: Int = 0,
+    val contentEtag: String? = null,
+    val lastGlobalSyncAt: String? = null,
 ) {
     companion object {
         const val SINGLETON_ID = 1

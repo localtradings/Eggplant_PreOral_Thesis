@@ -9,8 +9,9 @@ import com.eggplant.detector.detection.ncnn.ModelMetadata
 class DetectionStabilityTracker(
     private val metadata: ModelMetadata = ModelMetadata.EGGPLANT_YOLO26M,
     private val minimumFrames: Int = 2,
-    private val minimumStableMillis: Long = 400,
+    private val minimumStableMillis: Long = 0,
     private val minimumIoU: Float = 0.3f,
+    private val maximumInterFrameGapMillis: Long = 750,
     private val confirmedHoldMillis: Long = 750,
     private val sceneResetMillis: Long = 2_000,
 ) {
@@ -37,7 +38,10 @@ class DetectionStabilityTracker(
             val previous = availablePrevious
                 .filter { it.detection.modelClass.index == detection.modelClass.index }
                 .maxByOrNull { it.detection.bounds.intersectionOverUnion(detection.bounds) }
-                ?.takeIf { it.detection.bounds.intersectionOverUnion(detection.bounds) >= minimumIoU }
+                ?.takeIf {
+                    frame.timestampMillis - it.lastSeenAt <= maximumInterFrameGapMillis &&
+                        it.detection.bounds.intersectionOverUnion(detection.bounds) >= minimumIoU
+                }
             if (previous == null) {
                 Track(detection, frame.timestampMillis, frame.timestampMillis, frameCount = 1)
             } else {

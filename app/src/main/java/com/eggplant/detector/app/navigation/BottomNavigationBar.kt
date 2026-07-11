@@ -20,6 +20,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -32,9 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eggplant.detector.R
 import com.eggplant.detector.domain.model.NavigationItem
+import com.eggplant.detector.core.ui.motion.LocalEggplantMotion
 
 @Composable
 fun BottomNavigationBar(currentRoute: String?, onNavigate: (String) -> Unit) {
+    val motion = LocalEggplantMotion.current
     val items = listOf(
         NavigationItem(Routes.HOME, stringResource(R.string.nav_home), Icons.Filled.Home),
         NavigationItem(Routes.LIBRARY, stringResource(R.string.nav_library), Icons.AutoMirrored.Filled.MenuBook),
@@ -47,6 +53,9 @@ fun BottomNavigationBar(currentRoute: String?, onNavigate: (String) -> Unit) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 8.dp) {
         items.forEach { item ->
             val selected = currentRoute == item.route
+            val pillWidth by animateDpAsState(if (selected) 62.dp else 54.dp, tween(motion.fastMillis), label = "navPillWidth")
+            val pillColor by animateColorAsState(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, tween(motion.fastMillis), label = "navPillColor")
+            val iconSize by animateDpAsState(if (selected) 25.dp else 23.dp, tween(motion.fastMillis), label = "navIconSize")
             val description = if (item.route == Routes.CAMERA) cameraDescription else stringResource(R.string.navigate_to, item.label)
             Column(
                 modifier = Modifier
@@ -66,14 +75,14 @@ fun BottomNavigationBar(currentRoute: String?, onNavigate: (String) -> Unit) {
                 } else {
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                        color = pillColor,
                     ) {
-                        Box(modifier = Modifier.size(width = 54.dp, height = 32.dp), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.size(width = pillWidth, height = 32.dp), contentAlignment = Alignment.Center) {
                             Icon(
                                 item.icon,
                                 contentDescription = null,
                                 tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(23.dp),
+                                modifier = Modifier.size(iconSize),
                             )
                         }
                     }

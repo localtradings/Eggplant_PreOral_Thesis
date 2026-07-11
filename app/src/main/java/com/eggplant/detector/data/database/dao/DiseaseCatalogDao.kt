@@ -7,6 +7,7 @@ import androidx.room.Upsert
 import com.eggplant.detector.data.database.entity.DiseaseCatalogBundle
 import com.eggplant.detector.data.database.entity.DiseaseEntity
 import com.eggplant.detector.data.database.entity.DiseaseLocalizationEntity
+import com.eggplant.detector.data.database.entity.DiseaseReferenceEntity
 import com.eggplant.detector.data.database.entity.DiseaseSignEntity
 import com.eggplant.detector.data.database.entity.TreatmentEntity
 import kotlinx.coroutines.flow.Flow
@@ -29,8 +30,37 @@ interface DiseaseCatalogDao {
     @Upsert
     suspend fun upsertTreatments(rows: List<TreatmentEntity>)
 
+    @Upsert
+    suspend fun upsertReferences(rows: List<DiseaseReferenceEntity>)
+
     @Query("SELECT COUNT(*) FROM diseases")
     suspend fun diseaseCount(): Int
+
+    @Query("DELETE FROM disease_localizations WHERE languageTag = :languageTag")
+    suspend fun clearLocalizations(languageTag: String)
+
+    @Query("DELETE FROM disease_signs WHERE languageTag = :languageTag")
+    suspend fun clearSigns(languageTag: String)
+
+    @Query("DELETE FROM disease_references WHERE languageTag = :languageTag")
+    suspend fun clearReferences(languageTag: String)
+
+    @Transaction
+    suspend fun replaceLocalizedContent(
+        languageTag: String,
+        diseases: List<DiseaseEntity>,
+        localizations: List<DiseaseLocalizationEntity>,
+        signs: List<DiseaseSignEntity>,
+        references: List<DiseaseReferenceEntity>,
+    ) {
+        upsertDiseases(diseases)
+        clearLocalizations(languageTag)
+        clearSigns(languageTag)
+        clearReferences(languageTag)
+        upsertLocalizations(localizations)
+        upsertSigns(signs)
+        upsertReferences(references)
+    }
 
     @Transaction
     suspend fun upsertCatalog(
@@ -38,10 +68,12 @@ interface DiseaseCatalogDao {
         localizations: List<DiseaseLocalizationEntity>,
         signs: List<DiseaseSignEntity>,
         treatments: List<TreatmentEntity>,
+        references: List<DiseaseReferenceEntity>,
     ) {
         upsertDiseases(diseases)
         upsertLocalizations(localizations)
         upsertSigns(signs)
         upsertTreatments(treatments)
+        upsertReferences(references)
     }
 }

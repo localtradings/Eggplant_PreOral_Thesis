@@ -14,9 +14,9 @@ object DetectionGate {
     const val FRUIT_BORER_CONFIDENCE_THRESHOLD = 0.25f
     const val HEALTHY_CONFIDENCE_THRESHOLD = 0.25f
     const val LIVE_MIN_BOX_AREA = 0.0025f
-    const val LIVE_MAX_BOX_AREA = 0.90f
+    const val LIVE_MAX_BOX_AREA = 1.0f
     const val STILL_MIN_BOX_AREA = 0.0025f
-    const val STILL_MAX_BOX_AREA = 0.85f
+    const val STILL_MAX_BOX_AREA = 1.0f
 
     fun filter(frame: DetectionFrame, onRejected: ((DetectionBox, DetectionGateDecision) -> Unit)? = null): DetectionFrame {
         val accepted = frame.detections.filter { detection ->

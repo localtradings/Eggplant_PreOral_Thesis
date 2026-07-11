@@ -1,6 +1,7 @@
 package com.eggplant.detector.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -42,6 +43,32 @@ data class DiseaseLocalizationEntity(
     val description: String,
     val symptomPreview: String,
     val prevention: String,
+    @ColumnInfo(defaultValue = "''") val causes: String = "",
+    @ColumnInfo(defaultValue = "''") val guidance: String = "",
+    @ColumnInfo(defaultValue = "''") val whenToAct: String = "",
+    @ColumnInfo(defaultValue = "''") val disclaimer: String = "",
+)
+
+@Entity(
+    tableName = "disease_references",
+    primaryKeys = ["diseaseId", "languageTag", "position"],
+    foreignKeys = [
+        ForeignKey(
+            entity = DiseaseEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["diseaseId"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
+    ],
+    indices = [Index("diseaseId")],
+)
+data class DiseaseReferenceEntity(
+    val diseaseId: String,
+    val languageTag: String,
+    val position: Int,
+    val publisher: String,
+    val title: String,
+    val url: String,
 )
 
 @Entity(
@@ -93,4 +120,6 @@ data class DiseaseCatalogBundle(
     val signs: List<DiseaseSignEntity>,
     @Relation(parentColumn = "id", entityColumn = "diseaseId")
     val treatments: List<TreatmentEntity>,
+    @Relation(parentColumn = "id", entityColumn = "diseaseId")
+    val references: List<DiseaseReferenceEntity>,
 )

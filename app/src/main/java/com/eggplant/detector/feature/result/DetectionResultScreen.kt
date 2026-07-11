@@ -1,6 +1,9 @@
 package com.eggplant.detector.feature.result
 
 import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,6 +27,9 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +63,8 @@ import com.eggplant.detector.app.EggplantAppViewModel
 import com.eggplant.detector.R
 import com.eggplant.detector.app.SaveState
 import com.eggplant.detector.app.ResultWarning
+import com.eggplant.detector.app.SnapshotState
+import com.eggplant.detector.app.CloudActionState
 import com.eggplant.detector.core.ui.components.ConfidenceDisplay
 import com.eggplant.detector.core.ui.components.PrimaryButton
 import com.eggplant.detector.core.ui.components.ResultArtwork
@@ -84,11 +92,29 @@ fun DetectionResultScreen(
     val result by viewModel.currentResult.collectAsState()
     val saveState by viewModel.saveState.collectAsState()
     val resultWarning by viewModel.resultWarning.collectAsState()
+    val snapshotState by viewModel.snapshotState.collectAsState()
+    val cloudAction by viewModel.cloudActionState.collectAsState()
+    val requestDraft by viewModel.diseaseRequestDraft.collectAsState()
+    var showShareDialog by remember { mutableStateOf(false) }
+    var showRequestDialog by remember { mutableStateOf(false) }
+    var requestedName by remember { mutableStateOf("") }
+    var requestNotes by remember { mutableStateOf("") }
+    var rightsConsent by remember { mutableStateOf(false) }
+    val requestPhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 2),
+    ) { uris -> viewModel.addDiseaseRequestPhotos(uris) }
     ResultReport(
         result = result,
         title = title,
         onBack = onBack,
         actions = {
+            if (snapshotState == SnapshotState.PREPARING) {
+                Text(
+                    localized("Preparing photo…", "Inihahanda ang larawan…"),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             if (resultWarning == ResultWarning.SNAPSHOT_UNAVAILABLE) {
                 Text(
                     stringResource(R.string.snapshot_unavailable_warning),
@@ -108,8 +134,33 @@ fun DetectionResultScreen(
                     text = if (saveState == SaveState.SAVING) stringResource(R.string.saving_history) else stringResource(R.string.save_history),
                     onClick = onSave,
                     icon = Icons.Outlined.CheckCircle,
-                    enabled = saveState != SaveState.SAVING,
+                    enabled = saveState != SaveState.SAVING && snapshotState != SnapshotState.PREPARING,
                 )
+                if (result?.confidence ?: 0 >= 50 && result?.source != "gallery") {
+                    OutlinedButton(
+                        onClick = { showShareDialog = true },
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        enabled = snapshotState == SnapshotState.READY && cloudAction != CloudActionState.Working,
+                    ) { Text(stringResource(R.string.share_to_global)) }
+                }
+            }
+            if (result?.outcome == ScanOutcome.NO_MATCH) {
+                OutlinedButton(
+                    onClick = {
+                        viewModel.beginDiseaseRequest()
+                        showRequestDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    enabled = snapshotState == SnapshotState.READY && cloudAction != CloudActionState.Working,
+                ) { Text(stringResource(R.string.request_this_disease)) }
+            }
+            when (val action = cloudAction) {
+                CloudActionState.Idle -> Unit
+                CloudActionState.Working -> Text(localized("Working…", "Isinasagawa…"), color = MaterialTheme.colorScheme.primary)
+                is CloudActionState.Queued -> Text(action.message, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
+                is CloudActionState.Error -> Text(action.message, color = MaterialTheme.colorScheme.error)
             }
             OutlinedButton(
                 onClick = onScanAgain,
@@ -121,6 +172,94 @@ fun DetectionResultScreen(
             }
         },
     )
+    if (showShareDialog) {
+        AlertDialog(
+            onDismissRequest = { showShareDialog = false },
+            title = { Text(stringResource(R.string.share_to_global)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    result?.let { SnapshotPreview(it, Modifier.fillMaxWidth().height(132.dp)) }
+                    Text(localized("Publish this real scan photo anonymously? It will appear immediately after server validation and expire after 180 days.", "I-publish nang anonymous ang tunay na larawan ng scan na ito? Lalabas ito matapos ang server validation at mag-e-expire pagkalipas ng 180 araw."))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (!viewModel.globalSharingEnabled.value) viewModel.setGlobalSharing(true)
+                    viewModel.shareCurrentResult()
+                    showShareDialog = false
+                }) { Text(stringResource(R.string.share_to_global)) }
+            },
+            dismissButton = { TextButton(onClick = { showShareDialog = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    if (showRequestDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                viewModel.cancelDiseaseRequestDraft()
+                showRequestDialog = false
+            },
+            title = { Text(stringResource(R.string.request_this_disease)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    result?.let { SnapshotPreview(it, Modifier.fillMaxWidth().height(132.dp)) }
+                    Text(stringResource(R.string.real_photo_required))
+                    Text(
+                        stringResource(R.string.request_photo_count, requestDraft.photoPaths.size, 3),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            requestPhotoPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        enabled = requestDraft.photoPaths.size < 3 && !requestDraft.addingPhotos,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (requestDraft.addingPhotos) stringResource(R.string.adding_photos)
+                            else stringResource(R.string.add_request_photos),
+                        )
+                    }
+                    requestDraft.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    OutlinedTextField(requestedName, { requestedName = it.take(120) }, label = { Text(stringResource(R.string.requested_disease_name)) }, singleLine = true)
+                    OutlinedTextField(requestNotes, { requestNotes = it.take(2000) }, label = { Text(stringResource(R.string.optional_notes)) }, minLines = 2)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(rightsConsent, { rightsConsent = it })
+                        Text(localized("I own this photo or have permission to submit it.", "Ako ang may-ari ng larawan o may pahintulot akong isumite ito."))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = requestedName.trim().length >= 2 && rightsConsent &&
+                        requestDraft.photoPaths.isNotEmpty() && !requestDraft.addingPhotos &&
+                        cloudAction != CloudActionState.Working,
+                    onClick = {
+                        viewModel.submitDiseaseRequest(
+                            requestedName,
+                            requestNotes.takeIf { it.isNotBlank() },
+                            rightsConsent,
+                        ) { success ->
+                            if (success) {
+                                showRequestDialog = false
+                                requestedName = ""
+                                requestNotes = ""
+                                rightsConsent = false
+                            }
+                        }
+                    },
+                ) { Text(stringResource(R.string.submit_request)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.cancelDiseaseRequestDraft()
+                    showRequestDialog = false
+                }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
 }
 
 @Composable
@@ -187,10 +326,15 @@ fun ResultReport(
         when (result.outcome) {
             ScanOutcome.DISEASE -> {
                 ReportSection(stringResource(R.string.signs_detected), result.signs.joinToString("\n") { "• $it" })
-                if (result.detections.size > 1) {
+                val additional = result.detections
+                    .filter { it.diseaseId != result.diseaseId }
+                    .groupBy { it.diseaseId }
+                    .mapNotNull { (_, detections) -> detections.maxByOrNull { it.confidence } }
+                    .sortedByDescending { it.confidence }
+                if (additional.isNotEmpty()) {
                     ReportSection(
                         localized("Also detected", "Natukoy rin"),
-                        result.detections.joinToString("\n") { "• ${it.name} — ${it.confidence}%" },
+                        additional.joinToString("\n") { "• ${it.name} — ${it.confidence}%" },
                     )
                 }
                 ReportSection(stringResource(R.string.recommended_action), result.treatment)

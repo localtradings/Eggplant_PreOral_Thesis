@@ -6,6 +6,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -28,31 +31,37 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.eggplant.detector.app.EggplantAppViewModel
+import com.eggplant.detector.app.EggplantApplication
 import com.eggplant.detector.R
 import com.eggplant.detector.detection.api.DetectionBox
 import com.eggplant.detector.detection.api.DetectionClassPolicy
 import com.eggplant.detector.detection.api.EngineState
 import com.eggplant.detector.detection.api.InputSource
 import com.eggplant.detector.detection.ncnn.ModelMetadata
-import com.eggplant.detector.detection.ncnn.NcnnDetectionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @Composable
 fun CameraScreen(
@@ -61,6 +70,7 @@ fun CameraScreen(
     onResult: () -> Unit,
 ) {
     val context = LocalContext.current
+    val application = context.applicationContext as EggplantApplication
     val haptics = LocalHapticFeedback.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val detectHealthyLeafEnabled by viewModel.detectHealthyLeafEnabled.collectAsState()
@@ -85,17 +95,24 @@ fun CameraScreen(
     }
 
     if (!cameraPermission) {
-        CameraPermissionRequired(
+        GalleryWithoutCameraPermission(
+            viewModel = viewModel,
             permissionRequested = permissionRequested,
             onRequest = { permissionLauncher.launch(Manifest.permission.CAMERA) },
             onBack = onBack,
+            onResult = onResult,
         )
         return
     }
 
     var cameraState by remember { mutableStateOf(CameraAnalysisState()) }
     var controller by remember { mutableStateOf<CameraController?>(null) }
-    var captureFlashTrigger by remember { mutableStateOf(0) }
+    var captureFlashTrigger by remember { mutableIntStateOf(0) }
+    var focusPoint by remember { mutableStateOf<Offset?>(null) }
+    var confirmationHapticSent by remember { mutableStateOf(false) }
+    var liveCaptureRevision by remember { mutableIntStateOf(0) }
+    var liveStillRequestedForDisease by remember { mutableStateOf<String?>(null) }
+    var validatedLiveStill by remember { mutableStateOf<CameraScene?>(null) }
     val resultNavigationGate = remember { ResultNavigationGate() }
     val scope = rememberCoroutineScope()
     val previewView = remember {
@@ -108,8 +125,9 @@ fun CameraScreen(
         val created = CameraController(
             context = context,
             lifecycleOwner = lifecycleOwner,
-            engine = NcnnDetectionEngine(context),
+            engine = application.detectionEngine,
             onState = { cameraState = it },
+            closeEngineOnClose = false,
         )
         controller = created
         created.start(previewView)
@@ -126,6 +144,40 @@ fun CameraScreen(
                 detectHealthyPlant = detectHealthyPlantEnabled,
             ),
         )
+    }
+    LaunchedEffect(cameraState.confirmedDetections.isNotEmpty(), cameraState.livePreviewActive) {
+        if (cameraState.livePreviewActive && cameraState.confirmedDetections.isNotEmpty() && !confirmationHapticSent) {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            confirmationHapticSent = true
+        }
+        if (!cameraState.livePreviewActive) confirmationHapticSent = false
+    }
+    val confirmedShareDiseaseId = cameraState.confirmedDetections
+        .firstOrNull { it.modelClass.diseaseId != null && it.confidence >= MINIMUM_GLOBAL_SHARE_CONFIDENCE }
+        ?.modelClass
+        ?.diseaseId
+    LaunchedEffect(controller, cameraState.livePreviewActive, confirmedShareDiseaseId, liveCaptureRevision) {
+        val activeController = controller
+        val diseaseId = confirmedShareDiseaseId
+        if (
+            activeController == null ||
+            !cameraState.livePreviewActive ||
+            diseaseId == null ||
+            liveStillRequestedForDisease != null
+        ) {
+            return@LaunchedEffect
+        }
+        liveStillRequestedForDisease = diseaseId
+        val revision = liveCaptureRevision
+        activeController.capturePhoto(emitScene = false) { result ->
+            if (liveCaptureRevision != revision || liveStillRequestedForDisease != diseaseId) return@capturePhoto
+            validatedLiveStill = result.getOrNull()?.takeIf { scene ->
+                scene.detectionFrame.detections.any {
+                    it.modelClass.diseaseId == diseaseId &&
+                        it.confidence >= MINIMUM_GLOBAL_SHARE_CONFIDENCE
+                }
+            }
+        }
     }
 
     fun routeToResult() {
@@ -148,7 +200,27 @@ fun CameraScreen(
 
     fun handleLiveRelease(outcome: LivePreviewOutcome) {
         when (outcome) {
-            is LivePreviewOutcome.Disease -> openScene(outcome.scene, outcome.primary)
+            is LivePreviewOutcome.Disease -> {
+                val diseaseId = outcome.primary.modelClass.diseaseId
+                val still = validatedLiveStill
+                val stillPrimary = still?.detectionFrame?.detections?.maxByOrNull { detection ->
+                    if (
+                        diseaseId != null &&
+                        detection.modelClass.diseaseId == diseaseId &&
+                        detection.confidence >= MINIMUM_GLOBAL_SHARE_CONFIDENCE
+                    ) {
+                        detection.confidence
+                    } else {
+                        -1f
+                    }
+                }?.takeIf {
+                    diseaseId != null &&
+                        it.modelClass.diseaseId == diseaseId &&
+                        it.confidence >= MINIMUM_GLOBAL_SHARE_CONFIDENCE
+                }
+                if (still != null && stillPrimary != null) openScene(still, stillPrimary)
+                else openScene(outcome.scene, outcome.primary)
+            }
             is LivePreviewOutcome.Healthy -> openScene(outcome.scene, outcome.primary)
             LivePreviewOutcome.NoStableDetection -> {
                 cameraState = cameraState.copy(error = noStableDisease)
@@ -186,6 +258,23 @@ fun CameraScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+        Box(
+            Modifier.fillMaxSize().pointerInput(controller) {
+                detectTapGestures { point ->
+                    focusPoint = point
+                    controller?.focusAt(point.x, point.y, previewView)
+                }
+            },
+        )
+        focusPoint?.let { point ->
+            LaunchedEffect(point) { delay(850); if (focusPoint == point) focusPoint = null }
+            Box(
+                Modifier
+                    .offset { IntOffset((point.x - 32.dp.toPx()).roundToInt(), (point.y - 32.dp.toPx()).roundToInt()) }
+                    .size(64.dp)
+                    .border(2.dp, Color.White, RoundedCornerShape(16.dp)),
+            )
+        }
         DetectionOverlay(
             state = cameraState,
             displayName = { detection ->
@@ -233,6 +322,9 @@ fun CameraScreen(
             },
             onStartLivePreview = {
                 resultNavigationGate.reset()
+                liveCaptureRevision += 1
+                liveStillRequestedForDisease = null
+                validatedLiveStill = null
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 controller?.startLivePreview()
             },
@@ -241,12 +333,70 @@ fun CameraScreen(
                     allowHealthy = detectHealthyLeafEnabled || detectHealthyPlantEnabled,
                 ) ?: LivePreviewOutcome.NoStableDetection
                 handleLiveRelease(outcome)
+                liveCaptureRevision += 1
+                liveStillRequestedForDisease = null
+                validatedLiveStill = null
             },
             modifier = Modifier.align(Alignment.BottomCenter),
         )
         if (cameraState.isStillImageProcessing) {
             StillImageProcessingOverlay(Modifier.fillMaxSize())
         }
+    }
+}
+
+private const val MINIMUM_GLOBAL_SHARE_CONFIDENCE = 0.50f
+
+@Composable
+private fun GalleryWithoutCameraPermission(
+    viewModel: EggplantAppViewModel,
+    permissionRequested: Boolean,
+    onRequest: () -> Unit,
+    onBack: () -> Unit,
+    onResult: () -> Unit,
+) {
+    val context = LocalContext.current
+    val application = context.applicationContext as EggplantApplication
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf(CameraAnalysisState()) }
+    var controller by remember { mutableStateOf<CameraController?>(null) }
+    DisposableEffect(lifecycleOwner) {
+        val created = CameraController(context, lifecycleOwner, application.detectionEngine, { state = it }, closeEngineOnClose = false)
+        controller = created
+        created.startDetectorOnly()
+        onDispose { created.close(); controller = null }
+    }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null || state.engineState != EngineState.READY || state.isStillImageProcessing) return@rememberLauncherForActivityResult
+        val active = controller ?: return@rememberLauncherForActivityResult
+        state = state.copy(isStillImageProcessing = true, error = null)
+        scope.launch {
+            val bitmap = runCatching { withContext(Dispatchers.IO) { context.decodeGalleryBitmap(uri) } }.getOrElse {
+                state = state.copy(isStillImageProcessing = false, error = it.message ?: "Could not open the selected image.")
+                return@launch
+            }
+            active.analyzeBitmap(bitmap, InputSource.GALLERY) { result ->
+                bitmap.recycle()
+                state = state.copy(isStillImageProcessing = false)
+                when (val outcome = result.toStillImageResult("Could not analyze the selected image.")) {
+                    is StillImageResult.Disease -> viewModel.openDetectionScene(outcome.scene, outcome.primary, onResult)
+                    is StillImageResult.Healthy -> viewModel.openDetectionScene(outcome.scene, outcome.primary, onResult)
+                    is StillImageResult.NoMatch -> viewModel.openNoMatchScene(outcome.scene, onResult)
+                    is StillImageResult.Failure -> state = state.copy(error = outcome.message)
+                }
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize()) {
+        CameraPermissionRequired(
+            permissionRequested = permissionRequested,
+            onRequest = onRequest,
+            onGallery = { galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onBack = onBack,
+        )
+        if (state.engineState == EngineState.UNINITIALIZED || state.isStillImageProcessing) StillImageProcessingOverlay(Modifier.fillMaxSize())
+        state.error?.let { Text(it, Modifier.align(Alignment.BottomCenter).padding(24.dp), color = MaterialTheme.colorScheme.error) }
     }
 }
 

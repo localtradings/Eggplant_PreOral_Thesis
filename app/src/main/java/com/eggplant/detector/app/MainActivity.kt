@@ -14,6 +14,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eggplant.detector.app.navigation.EggplantNavigation
 import com.eggplant.detector.core.ui.theme.EggplantDetectorTheme
+import com.eggplant.detector.core.ui.motion.EggplantMotion
+import com.eggplant.detector.core.ui.motion.LocalEggplantMotion
+import androidx.compose.runtime.CompositionLocalProvider
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -33,6 +36,7 @@ fun EggplantDetectorApp(
 ) {
     val theme by appViewModel.themePreference.collectAsStateWithLifecycle()
     val language by appViewModel.languagePreference.collectAsStateWithLifecycle()
+    val motion by appViewModel.motionPreference.collectAsStateWithLifecycle()
     LaunchedEffect(language) {
         val locales = LocaleListCompat.forLanguageTags(language.languageTag)
         if (AppCompatDelegate.getApplicationLocales() != locales) {
@@ -46,6 +50,8 @@ fun EggplantDetectorApp(
         ThemePreference.SYSTEM -> systemDark
     }
     EggplantDetectorTheme(darkTheme = darkTheme) {
-        EggplantNavigation(viewModel = appViewModel)
+        CompositionLocalProvider(LocalEggplantMotion provides EggplantMotion.forPreference(motion)) {
+            EggplantNavigation(viewModel = appViewModel)
+        }
     }
 }

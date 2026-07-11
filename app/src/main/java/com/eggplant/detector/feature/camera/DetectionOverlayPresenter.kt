@@ -33,7 +33,7 @@ internal fun presentOverlayDetections(
         OverlayDetection(
             detection = detection,
             phase = OverlayPhase.TENTATIVE,
-            label = null,
+            label = "Possible ${displayName(detection)}",
         )
     }
     return tentativeItems + confirmedItems

@@ -63,6 +63,7 @@ internal fun DetectionOverlay(
             val isCompact = min(width, height) < with(density) { 72.dp.toPx() }
             val borderWidth = if (isCompact) 2.dp else 3.dp
             val shape = RoundedCornerShape(if (isCompact) 6.dp else 10.dp)
+            val phaseColor = if (item.phase == OverlayPhase.CONFIRMED) Color(0xFF35B854) else Color(0xFF9A6AD4)
             val description = if (item.phase == OverlayPhase.CONFIRMED) {
                 stringResource(
                     R.string.detection_box_description,
@@ -75,7 +76,7 @@ internal fun DetectionOverlay(
                 modifier = Modifier
                     .offset { IntOffset(left.roundToInt(), top.roundToInt()) }
                     .size(with(density) { width.toDp() }, with(density) { height.toDp() })
-                    .border(borderWidth, Color(0xFFFFB44C), shape)
+                    .border(borderWidth, phaseColor, shape)
                     .then(
                         if (item.phase == OverlayPhase.CONFIRMED && onDetectionClick != null) {
                             Modifier.clickable { onDetectionClick(detection) }
@@ -101,7 +102,7 @@ internal fun DetectionOverlay(
                     modifier = Modifier
                         .offset { IntOffset(labelX.roundToInt(), labelY.roundToInt()) }
                         .widthIn(max = 180.dp),
-                    color = Color(0xFFE89526),
+                    color = phaseColor,
                     shape = RoundedCornerShape(if (isCompact) 6.dp else 8.dp),
                     shadowElevation = 2.dp,
                 ) {
@@ -111,7 +112,7 @@ internal fun DetectionOverlay(
                             horizontal = if (isCompact) 4.dp else 6.dp,
                             vertical = if (isCompact) 2.dp else 3.dp,
                         ),
-                        color = Color(0xFF201407),
+                        color = Color.White,
                         fontSize = if (isCompact) 9.sp else 11.sp,
                         lineHeight = if (isCompact) 11.sp else 14.sp,
                         maxLines = 1,

@@ -5,6 +5,8 @@ plugins {
     alias(libs.plugins.room)
 }
 
+fun String.asBuildConfigString(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
 android {
     namespace = "com.eggplant.detector"
     compileSdk = 36
@@ -13,12 +15,27 @@ android {
         applicationId = "com.eggplant.detector"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.4.3"
+        versionCode = 8
+        versionName = "1.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+        buildConfigField(
+            "String",
+            "CLOUD_API_BASE_URL",
+            (providers.gradleProperty("EGGPLANT_API_BASE_URL").orNull ?: "").asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "SUPABASE_URL",
+            (providers.gradleProperty("EGGPLANT_SUPABASE_URL").orNull ?: "").asBuildConfigString(),
+        )
+        buildConfigField(
+            "String",
+            "SUPABASE_PUBLISHABLE_KEY",
+            (providers.gradleProperty("EGGPLANT_SUPABASE_PUBLISHABLE_KEY").orNull ?: "").asBuildConfigString(),
+        )
     }
 
     ndkVersion = "28.2.13676358"
@@ -34,6 +51,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+        create("demo") {
+            initWith(getByName("release"))
+            // Thesis distribution build: release-equivalent behavior, explicitly
+            // debug-signed so the APK is installable without committing a key.
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -84,6 +108,9 @@ dependencies {
     // Room 2.8.4's migration test runtime uses serialization-json 1.8.1.
     // Align core to avoid loading the incompatible Lifecycle transitive 1.7.3 runtime.
     implementation(libs.kotlinx.serialization.core)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.okhttp)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
@@ -93,11 +120,13 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.androidx.room.testing)
+    testImplementation(libs.mockwebserver)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.androidx.work.testing)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

@@ -1,5 +1,7 @@
 package com.eggplant.detector.feature.camera
 
+import java.nio.ByteBuffer
+
 data class RotatedRgb(
     val width: Int,
     val height: Int,
@@ -15,15 +17,21 @@ object CameraFrameConverter {
         width: Int,
         height: Int,
         rowStride: Int,
+        cropLeft: Int = 0,
+        cropTop: Int = 0,
+        cropWidth: Int = width,
+        cropHeight: Int = height,
     ): ByteArray {
         require(width > 0 && height > 0)
         require(rowStride >= width * 4)
         require(rgbaBytes.size >= rowStride * height)
-        val rgb = ByteArray(width * height * 3)
+        require(cropLeft >= 0 && cropTop >= 0 && cropWidth > 0 && cropHeight > 0)
+        require(cropLeft + cropWidth <= width && cropTop + cropHeight <= height)
+        val rgb = ByteArray(cropWidth * cropHeight * 3)
         var destination = 0
-        repeat(height) { y ->
-            var source = y * rowStride
-            repeat(width) {
+        repeat(cropHeight) { y ->
+            var source = (cropTop + y) * rowStride + cropLeft * 4
+            repeat(cropWidth) {
                 rgb[destination++] = rgbaBytes[source]
                 rgb[destination++] = rgbaBytes[source + 1]
                 rgb[destination++] = rgbaBytes[source + 2]
@@ -77,6 +85,48 @@ object CameraFrameConverter {
                         val red = rgbBytes[offset].toInt() and 0xff
                         val green = rgbBytes[offset + 1].toInt() and 0xff
                         val blue = rgbBytes[offset + 2].toInt() and 0xff
+                        luminance += (red * 299 + green * 587 + blue * 114) / 1000
+                        samples += 1
+                    }
+                }
+                val bucket = ((luminance / samples) * 15 / 255).coerceIn(0, 15)
+                token = (token shl 4) or bucket.toLong()
+            }
+        }
+        return token
+    }
+
+    fun sceneTokenRgba(
+        buffer: ByteBuffer,
+        width: Int,
+        height: Int,
+        rowStride: Int,
+        cropLeft: Int = 0,
+        cropTop: Int = 0,
+        cropWidth: Int = width,
+        cropHeight: Int = height,
+    ): Long {
+        require(buffer.isDirect)
+        require(rowStride >= width * 4)
+        require(buffer.capacity() >= rowStride * height)
+        require(cropLeft >= 0 && cropTop >= 0 && cropWidth > 0 && cropHeight > 0)
+        require(cropLeft + cropWidth <= width && cropTop + cropHeight <= height)
+        val bytes = buffer.duplicate()
+        var token = 0L
+        repeat(4) { blockY ->
+            repeat(4) { blockX ->
+                var luminance = 0
+                var samples = 0
+                repeat(2) { sampleY ->
+                    repeat(2) { sampleX ->
+                        val x = cropLeft + (((blockX * 2 + sampleX + 0.5f) / 8f) * cropWidth)
+                            .toInt().coerceIn(0, cropWidth - 1)
+                        val y = cropTop + (((blockY * 2 + sampleY + 0.5f) / 8f) * cropHeight)
+                            .toInt().coerceIn(0, cropHeight - 1)
+                        val offset = y * rowStride + x * 4
+                        val red = bytes.get(offset).toInt() and 0xff
+                        val green = bytes.get(offset + 1).toInt() and 0xff
+                        val blue = bytes.get(offset + 2).toInt() and 0xff
                         luminance += (red * 299 + green * 587 + blue * 114) / 1000
                         samples += 1
                     }
